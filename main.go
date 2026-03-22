@@ -32,7 +32,7 @@ func main() {
 		appService.startup(app)
 	})
 
-	overlayWindow := app.Window.NewWithOptions(application.WebviewWindowOptions{
+	appService.overlayWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "RuneCooldownTracker",
 		Width:            1024,
 		Height:           768,
@@ -46,8 +46,8 @@ func main() {
 		},
 	})
 
-	overlayWindow.SetIgnoreMouseEvents(true)
-	overlayWindow.SetAlwaysOnTop(true)
+	appService.overlayWindow.SetIgnoreMouseEvents(true)
+	appService.overlayWindow.SetAlwaysOnTop(true)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
