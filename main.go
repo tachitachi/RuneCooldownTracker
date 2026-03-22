@@ -11,6 +11,9 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
+//go:embed frontend/src/assets/images/logo-universal.png
+var trayIcon []byte
+
 func main() {
 	appService := NewApp()
 
@@ -48,6 +51,28 @@ func main() {
 
 	appService.overlayWindow.SetIgnoreMouseEvents(true)
 	appService.overlayWindow.SetAlwaysOnTop(true)
+
+	appService.configWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:          "RuneCooldownTracker Config",
+		Width:          480,
+		Height:         320,
+		Hidden:         true,
+		BackgroundType: application.BackgroundTypeSolid,
+		URL:            "/config.html",
+	})
+
+	tray := app.SystemTray.New()
+	tray.SetIcon(trayIcon)
+	tray.SetTooltip("RuneCooldownTracker")
+
+	menu := app.NewMenu()
+	menu.Add("Open Config").OnClick(func(_ *application.Context) {
+		appService.configWindow.Show()
+	})
+	menu.Add("Quit").OnClick(func(_ *application.Context) {
+		app.Quit()
+	})
+	tray.SetMenu(menu)
 
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
