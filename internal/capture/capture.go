@@ -164,8 +164,13 @@ func (c *CaptureHandler) StartCapture(hwnd win.HWND) error {
 		}
 		defer framePoolStatic.Release()
 
-		// Create frame pool
-		c.framePool, err = framePoolStatic.CreateFreeThreaded(c.device, winrt.DirectXPixelFormat_B8G8R8A8UIntNormalized, 1, size)
+		// Create frame pool.
+		// The winrt library's CreateFreeThreaded packs SizeInt32 into a single
+		// register with Width<<32|Height, but x64 little-endian expects Width in
+		// the low DWORD. Pre-swap so the bug cancels out and the right dimensions
+		// reach the OS.
+		swappedSize := &winrt.SizeInt32{Width: size.Height, Height: size.Width}
+		c.framePool, err = framePoolStatic.CreateFreeThreaded(c.device, winrt.DirectXPixelFormat_B8G8R8A8UIntNormalized, 1, swappedSize)
 		if err != nil {
 			result <- resultAttr{errors.Wrap(err, "CreateFramePool")}
 			return
@@ -302,7 +307,6 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	// -----------------------------------------------------------------------
 
 	desc := gpuTexture.GetDesc()
-	fmt.Printf("onFrameArrived: frame %dx%d fmt=%d\n", desc.Width, desc.Height, desc.Format)
 
 	stagingDesc := desc
 	stagingDesc.Usage = D3D11_USAGE_STAGING
@@ -347,6 +351,9 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	height := int(desc.Height)
 	rowPitch := int(mapped.RowPitch)
 	totalBytes := rowPitch * height
+
+	fmt.Printf("onFrameArrived: desc %dx%d fmt=%d rowPitch=%d totalBytes=%d\n",
+		desc.Width, desc.Height, desc.Format, rowPitch, totalBytes)
 
 	src := unsafe.Slice((*byte)(mapped.PData), totalBytes)
 	img := image.NewRGBA(image.Rect(0, 0, width, height))
