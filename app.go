@@ -27,7 +27,7 @@ func NewApp() *App {
 // startup is called from the ApplicationStarted event in main.go.
 func (a *App) startup(app *application.App) {
 	a.app = app
-	a.EnableClickThrough()
+	// a.EnableClickThrough()
 	a.followWindow(app.Context(), "RuneScape")
 	a.captureGraphics(app.Context(), "RuneScape")
 }
