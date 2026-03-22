@@ -158,6 +158,17 @@ func D3D11CreateTexture2D(device *dx11.ID3D11Device, desc *D3D11_TEXTURE2D_DESC)
 	return tex, nil
 }
 
+// D3D11_BOX defines a rectangular sub-region of a texture for CopySubresourceRegion.
+// For 2D textures: Front=0, Back=1; Left/Right are X bounds, Top/Bottom are Y bounds.
+type D3D11_BOX struct {
+	Left   uint32
+	Top    uint32
+	Front  uint32
+	Right  uint32
+	Bottom uint32
+	Back   uint32
+}
+
 // D3D11CopyResource calls ID3D11DeviceContext::CopyResource (returns void).
 func D3D11CopyResource(ctx *dx11.ID3D11DeviceContext, dst, src *ID3D11Texture2D) {
 	syscall.SyscallN(
@@ -165,6 +176,23 @@ func D3D11CopyResource(ctx *dx11.ID3D11DeviceContext, dst, src *ID3D11Texture2D)
 		uintptr(unsafe.Pointer(ctx)),
 		uintptr(unsafe.Pointer(dst)),
 		uintptr(unsafe.Pointer(src)),
+	)
+}
+
+// D3D11CopySubresourceRegion calls ID3D11DeviceContext::CopySubresourceRegion.
+// Copies srcBox from src into dst at (dstX, dstY, dstZ). For 2D textures dstZ=0.
+func D3D11CopySubresourceRegion(ctx *dx11.ID3D11DeviceContext, dst *ID3D11Texture2D, dstSubresource, dstX, dstY, dstZ uint32, src *ID3D11Texture2D, srcSubresource uint32, srcBox *D3D11_BOX) {
+	syscall.SyscallN(
+		ctx.VTable().CopySubresourceRegion,
+		uintptr(unsafe.Pointer(ctx)),
+		uintptr(unsafe.Pointer(dst)),
+		uintptr(dstSubresource),
+		uintptr(dstX),
+		uintptr(dstY),
+		uintptr(dstZ),
+		uintptr(unsafe.Pointer(src)),
+		uintptr(srcSubresource),
+		uintptr(unsafe.Pointer(srcBox)),
 	)
 }
 

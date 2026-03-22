@@ -41,6 +41,7 @@ type CaptureHandler struct {
 func (c *CaptureHandler) SetCropRegion(r *CropRegion) {
 	c.cropMu.Lock()
 	c.cropRegion = r
+	c.savedFirstFrame = false
 	c.cropMu.Unlock()
 }
 
@@ -282,9 +283,11 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 		}
 	}()
 
-	// Only save the very first frame so we can inspect the output without
-	// flooding the disk at 60 fps.
-	if c.savedFirstFrame {
+	// Skip all GPU work until the user has defined a capture region.
+	c.cropMu.Lock()
+	crop := c.cropRegion
+	c.cropMu.Unlock()
+	if crop == nil {
 		return 0
 	}
 
@@ -316,12 +319,28 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	defer gpuTexture.Release()
 
 	// -----------------------------------------------------------------------
-	// Step 2 – Create a CPU-readable staging texture with the same dimensions
+	// Step 2 – Clamp crop to the actual frame bounds
 	// -----------------------------------------------------------------------
 
 	desc := gpuTexture.GetDesc()
+	frameW, frameH := int(desc.Width), int(desc.Height)
+
+	x0 := max(0, crop.X)
+	y0 := max(0, crop.Y)
+	x1 := min(frameW, crop.X+crop.W)
+	y1 := min(frameH, crop.Y+crop.H)
+	if x1 <= x0 || y1 <= y0 {
+		return 0
+	}
+	cropW, cropH := x1-x0, y1-y0
+
+	// -----------------------------------------------------------------------
+	// Step 3 – Create a CPU-readable staging texture sized to the crop region
+	// -----------------------------------------------------------------------
 
 	stagingDesc := desc
+	stagingDesc.Width = uint32(cropW)
+	stagingDesc.Height = uint32(cropH)
 	stagingDesc.Usage = D3D11_USAGE_STAGING
 	stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ
 	stagingDesc.BindFlags = 0
@@ -336,45 +355,39 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	defer stagingTex.Release()
 
 	// -----------------------------------------------------------------------
-	// Step 3 – GPU-side copy: gpuTexture → stagingTex
+	// Step 4 – GPU-side copy: only the crop region → staging texture
 	// -----------------------------------------------------------------------
 
-	ctx := c.deviceDx.GetImmediateContext()
-	defer ctx.Release()
+	dctx := c.deviceDx.GetImmediateContext()
+	defer dctx.Release()
 
-	D3D11CopyResource(ctx, stagingTex, gpuTexture)
+	srcBox := D3D11_BOX{
+		Left: uint32(x0), Right: uint32(x1),
+		Top: uint32(y0), Bottom: uint32(y1),
+		Front: 0, Back: 1,
+	}
+	D3D11CopySubresourceRegion(dctx, stagingTex, 0, 0, 0, 0, gpuTexture, 0, &srcBox)
 
 	// -----------------------------------------------------------------------
-	// Step 4 – Map the staging texture so the CPU can read it
+	// Step 5 – Map the (small) staging texture and convert BGRA → RGBA
 	// -----------------------------------------------------------------------
 
-	mapped, err := D3D11Map(ctx, stagingTex, 0, D3D11_MAP_READ, 0)
+	mapped, err := D3D11Map(dctx, stagingTex, 0, D3D11_MAP_READ, 0)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "onFrameArrived: Map:", err)
 		return 0
 	}
-	// Unmap must always happen, even if we error below.
-	defer D3D11Unmap(ctx, stagingTex, 0)
+	defer D3D11Unmap(dctx, stagingTex, 0)
 
-	// -----------------------------------------------------------------------
-	// Step 5 – Wrap the raw pointer and convert BGRA → RGBA
-	// -----------------------------------------------------------------------
-
-	width := int(desc.Width)
-	height := int(desc.Height)
 	rowPitch := int(mapped.RowPitch)
-	totalBytes := rowPitch * height
-
-	fmt.Printf("onFrameArrived: desc %dx%d fmt=%d rowPitch=%d totalBytes=%d\n",
-		desc.Width, desc.Height, desc.Format, rowPitch, totalBytes)
-
+	totalBytes := rowPitch * cropH
 	src := unsafe.Slice((*byte)(mapped.PData), totalBytes)
-	img := image.NewRGBA(image.Rect(0, 0, width, height))
+	img := image.NewRGBA(image.Rect(0, 0, cropW, cropH))
 
-	for y := 0; y < height; y++ {
+	for y := 0; y < cropH; y++ {
 		srcRow := y * rowPitch
 		dstRow := y * img.Stride
-		for x := 0; x < width; x++ {
+		for x := 0; x < cropW; x++ {
 			s := srcRow + x*4
 			d := dstRow + x*4
 			img.Pix[d+0] = src[s+2] // R ← B
@@ -385,17 +398,16 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	}
 
 	// -----------------------------------------------------------------------
-	// Step 6 – Debug: save first frame to disk
+	// Step 6 – Debug: save the first processed frame to disk
 	// -----------------------------------------------------------------------
 
 	if !c.savedFirstFrame {
-		f, err := os.Create("frame.png")
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "onFrameArrived: os.Create:", err)
+		if f, ferr := os.Create("frame.png"); ferr != nil {
+			fmt.Fprintln(os.Stderr, "onFrameArrived: os.Create:", ferr)
 		} else {
 			defer f.Close()
-			if err = png.Encode(f, img); err != nil {
-				fmt.Fprintln(os.Stderr, "onFrameArrived: png.Encode:", err)
+			if ferr = png.Encode(f, img); ferr != nil {
+				fmt.Fprintln(os.Stderr, "onFrameArrived: png.Encode:", ferr)
 			} else {
 				fmt.Println("onFrameArrived: saved frame.png")
 			}
@@ -404,28 +416,11 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	}
 
 	// -----------------------------------------------------------------------
-	// Step 7 – Apply crop and dispatch to OnFrame
+	// Step 7 – Dispatch to OnFrame
 	// -----------------------------------------------------------------------
 
-	c.cropMu.Lock()
-	crop := c.cropRegion
-	c.cropMu.Unlock()
-
-	out := image.Image(img)
-	if crop != nil {
-		x0 := max(0, crop.X)
-		y0 := max(0, crop.Y)
-		x1 := min(width, crop.X+crop.W)
-		y1 := min(height, crop.Y+crop.H)
-		if x1 > x0 && y1 > y0 {
-			out = img.SubImage(image.Rect(x0, y0, x1, y1))
-		}
-	}
-
 	if c.OnFrame != nil {
-		if rgba, ok := out.(*image.RGBA); ok {
-			c.OnFrame(rgba)
-		}
+		c.OnFrame(img)
 	}
 
 	return 0
