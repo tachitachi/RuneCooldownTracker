@@ -10,11 +10,12 @@ import (
 
 	"github.com/TKMAX777/winapi"
 	"github.com/lxn/win"
+	"github.com/wailsapp/wails/v3/pkg/application"
 )
 
 // App struct
 type App struct {
-	ctx     context.Context
+	app     *application.App
 	handler *capture.CaptureHandler
 }
 
@@ -23,20 +24,18 @@ func NewApp() *App {
 	return &App{}
 }
 
-// startup is called when the app starts. The context is saved
-// so we can call the runtime methods
-func (a *App) startup(ctx context.Context) {
-	a.ctx = ctx
+// startup is called from the ApplicationStarted event in main.go.
+func (a *App) startup(app *application.App) {
+	a.app = app
 	a.EnableClickThrough()
-	a.FollowWindow(ctx, "RuneScape")
-	a.CaptureGraphics(ctx, "RuneScape")
+	a.followWindow(app.Context(), "RuneScape")
+	a.captureGraphics(app.Context(), "RuneScape")
 }
 
-func (a *App) shutdown(ctx context.Context) {
+func (a *App) shutdown() {
 	fmt.Println("Application shutting down, closing capture handler...")
 	if a.handler != nil {
-		err := a.handler.Close()
-		if err != nil {
+		if err := a.handler.Close(); err != nil {
 			fmt.Printf("Error closing handler: %v\n", err)
 		}
 	}
@@ -53,81 +52,59 @@ func (a *App) EnableClickThrough() {
 		return
 	}
 
-	// 1. Get current extended styles
 	exStyle := win.GetWindowLong(hwnd, win.GWL_EXSTYLE)
-
-	// 2. Explicitly ADD Layered and Transparent (Click-through)
-	// We also add TOOLWINDOW to hide it from the taskbar if you want a pure overlay
 	exStyle |= win.WS_EX_LAYERED | win.WS_EX_TRANSPARENT
-
-	// 3. Force the style
 	win.SetWindowLong(hwnd, win.GWL_EXSTYLE, exStyle)
 
-	// 4. CRITICAL: Set Layered Window Attributes
-	// This tells Windows to treat the 0-alpha pixels as truly transparent/clickable
-	// You may need to import "github.com/lxn/win" or use syscall for this
-	// SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
-
-	// 5. Refresh the window position and flags
 	win.SetWindowPos(hwnd, win.HWND_TOPMOST, 0, 0, 0, 0,
 		win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_SHOWWINDOW|win.SWP_FRAMECHANGED)
 }
 
-func (a *App) FollowWindow(ctx context.Context, targetTitle string) {
+// followWindow is private — only called from startup, not bound to the frontend.
+func (a *App) followWindow(ctx context.Context, targetTitle string) {
 	go func() {
-		// Give the app time to initialize
-		// time.Sleep(1 * time.Second)
+		myHwnd := win.FindWindow(nil, syscall.StringToUTF16Ptr("RuneCooldownTracker"))
+		titlePtr := syscall.StringToUTF16Ptr(targetTitle)
 
-		select {
-		case <-ctx.Done():
-			fmt.Println("Cleaning up window tracker...")
-			return
-		default:
-			// Find OUR window (the overlay)
-			myHwnd := win.FindWindow(nil, syscall.StringToUTF16Ptr("RuneCooldownTracker"))
-			// Find THE TARGET window (e.g., the game)
-			targetTitle := syscall.StringToUTF16Ptr(targetTitle) // Replace with actual title
-
-			for {
-				targetHwnd := win.FindWindow(nil, targetTitle)
-
-				if targetHwnd != 0 && myHwnd != 0 {
-					var rect win.RECT
-					// Get the position of the target window
-					if win.GetWindowRect(targetHwnd, &rect) {
-						width := rect.Right - rect.Left
-						height := rect.Bottom - rect.Top
-
-						// Move our window to match exactly
-						// SWP_NOZORDER ensures we don't mess with AlwaysOnTop
-						// SWP_NOACTIVATE ensures we don't steal focus
-						win.SetWindowPos(myHwnd, 0,
-							rect.Left, rect.Top, width, height,
-							win.SWP_NOZORDER|win.SWP_NOACTIVATE)
-					}
-				}
-
-				// Poll every 16ms (~60fps) or 100ms for lower CPU usage
-				time.Sleep(100 * time.Millisecond)
+		for {
+			select {
+			case <-ctx.Done():
+				fmt.Println("Window tracker stopping...")
+				return
+			default:
 			}
+
+			targetHwnd := win.FindWindow(nil, titlePtr)
+			if targetHwnd != 0 && myHwnd != 0 {
+				var rect win.RECT
+				if win.GetWindowRect(targetHwnd, &rect) {
+					width := rect.Right - rect.Left
+					height := rect.Bottom - rect.Top
+					win.SetWindowPos(myHwnd, 0,
+						rect.Left, rect.Top, width, height,
+						win.SWP_NOZORDER|win.SWP_NOACTIVATE)
+				}
+			}
+
+			time.Sleep(100 * time.Millisecond)
 		}
 	}()
 }
 
-func (a *App) CaptureGraphics(ctx context.Context, targetWindow string) {
+// captureGraphics is private — only called from startup, not bound to the frontend.
+func (a *App) captureGraphics(ctx context.Context, targetWindow string) {
 	var rdHwnd win.HWND
 	rdHwnd = winapi.FindWindowEx(0, rdHwnd, nil, winapi.MustUTF16PtrFromString(targetWindow))
 	if rdHwnd == 0 {
 		fmt.Printf("Could not find window: %s\n", targetWindow)
 		return
 	}
-	fmt.Printf("hello %d\n", rdHwnd)
+	fmt.Printf("Found target window: %d\n", rdHwnd)
 
 	a.handler = &capture.CaptureHandler{}
 
 	go func() {
-		err := a.handler.StartCapture(rdHwnd)
-		if err != nil {
+		if err := a.handler.StartCapture(rdHwnd); err != nil {
 			fmt.Println("Capture Error:", err)
 		}
 	}()

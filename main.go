@@ -2,46 +2,51 @@ package main
 
 import (
 	"embed"
+	"log"
 
-	"github.com/wailsapp/wails/v2"
-	"github.com/wailsapp/wails/v2/pkg/options"
-	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
-	"github.com/wailsapp/wails/v2/pkg/options/windows"
+	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
 //go:embed all:frontend/dist
 var assets embed.FS
 
 func main() {
-	// Create an instance of the app structure
-	app := NewApp()
+	appService := NewApp()
 
-	// Create application with options
-	err := wails.Run(&options.App{
-		Title:       "RuneCooldownTracker",
-		AlwaysOnTop: false,
-		Frameless:   true,
-
-		Windows: &windows.Options{
-			WebviewIsTransparent: true,
-			WindowIsTranslucent:  false,
-			// This makes the window "invisible" to clicks where there is no UI
-			BackdropType: windows.None,
+	app := application.New(application.Options{
+		Name:        "RuneCooldownTracker",
+		Description: "RuneScape ability cooldown overlay",
+		Assets: application.AssetOptions{
+			Handler: application.BundledAssetFileServer(assets),
 		},
-		Width:  1024,
-		Height: 768,
-		AssetServer: &assetserver.Options{
-			Assets: assets,
+		Services: []application.Service{
+			application.NewService(appService),
 		},
-		BackgroundColour: &options.RGBA{R: 0, G: 0, B: 0, A: 0},
-		OnStartup:        app.startup,
-		OnShutdown:       app.shutdown,
-		Bind: []interface{}{
-			app,
+		OnShutdown: func() {
+			appService.shutdown()
 		},
 	})
 
-	if err != nil {
-		println("Error:", err.Error())
+	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
+		appService.startup(app)
+	})
+
+	application.NewWindow(application.WebviewWindowOptions{
+		Title:            "RuneCooldownTracker",
+		Width:            1024,
+		Height:           768,
+		Frameless:        true,
+		AlwaysOnTop:      false,
+		BackgroundType:   application.BackgroundTypeTransparent,
+		BackgroundColour: application.NewRGBA(0, 0, 0, 0),
+		URL:              "/",
+		Windows: application.WindowsWindow{
+			BackdropType: application.None,
+		},
+	})
+
+	if err := app.Run(); err != nil {
+		log.Fatal(err)
 	}
 }
