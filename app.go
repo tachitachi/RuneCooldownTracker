@@ -47,20 +47,6 @@ func (a *App) Greet(name string) string {
 	return fmt.Sprintf("Hello %s, It's show time!", name)
 }
 
-func (a *App) EnableClickThrough() {
-	hwnd := win.FindWindow(nil, syscall.StringToUTF16Ptr("RuneCooldownTracker"))
-	if hwnd == 0 {
-		return
-	}
-
-	exStyle := win.GetWindowLong(hwnd, win.GWL_EXSTYLE)
-	exStyle |= win.WS_EX_LAYERED | win.WS_EX_TRANSPARENT
-	win.SetWindowLong(hwnd, win.GWL_EXSTYLE, exStyle)
-
-	win.SetWindowPos(hwnd, win.HWND_TOPMOST, 0, 0, 0, 0,
-		win.SWP_NOMOVE|win.SWP_NOSIZE|win.SWP_SHOWWINDOW|win.SWP_FRAMECHANGED)
-}
-
 // followWindow is private — only called from startup, not bound to the frontend.
 func (a *App) followWindow(ctx context.Context, targetTitle string) {
 	user32 := syscall.NewLazyDLL("user32.dll")
