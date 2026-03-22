@@ -3,6 +3,7 @@ package capture
 import (
 	"fmt"
 	"image"
+	"image/png"
 	"os"
 	"runtime"
 	"syscall"
@@ -26,6 +27,7 @@ type CaptureHandler struct {
 	graphicsCaptureSession *winrt.IGraphicsCaptureSession
 	framePoolToken         *winrt.EventRegistrationToken
 	isRunning              bool
+	savedFirstFrame        bool
 	OnFrame                FrameProcessor
 }
 
@@ -216,29 +218,18 @@ func (c *CaptureHandler) StartCapture(hwnd win.HWND) error {
 	return res.err
 }
 
+// IDirect3DSurface is the WinRT wrapper for a D3D surface returned by a capture frame.
 type IDirect3DSurface struct {
 	ole.IInspectable
 }
 
-type IDXGISurface struct {
-	ole.IInspectable
-}
-
-type ID3D11Texture2D struct {
-	ole.IInspectable
-}
-
 var (
-	// IDirect3DSurface: The WinRT wrapper for a D3D surface
+	// IDirect3DSurfaceID is the IID for the WinRT IDirect3DSurface interface.
 	IDirect3DSurfaceID = ole.NewGUID("{0BFAD9C1-D19E-45BB-A2AC-998E3FCB1175}")
 
-	// IDXGISurface: The lower-level DirectX surface
-	IDXGISurfaceID = ole.NewGUID("{cafcb56c-6eb3-4047-972d-45d3047e66c3}")
-
-	// ID3D11Texture2D: The actual 2D grid of pixels
-	ID3D11Texture2D1ID = ole.NewGUID("{6f15e347-0408-4690-8235-91845153ad57}")
-
-	IDirect3DDXGIIterfaceAccessID = ole.NewGUID("{704C2307-2399-4A34-B3AF-61D027F4D677}")
+	// IDirect3DDXGIInterfaceAccessID is the IID for IDirect3DDxgiInterfaceAccess,
+	// the bridge that lets you unwrap a WinRT surface to its underlying D3D11 object.
+	IDirect3DDXGIInterfaceAccessID = ole.NewGUID("{704C2307-2399-4A34-B3AF-61D027F4D677}")
 )
 
 func Surface(v *winrt.IDirect3D11CaptureFrame) (*IDirect3DSurface, error) {
@@ -257,38 +248,139 @@ func Surface(v *winrt.IDirect3D11CaptureFrame) (*IDirect3DSurface, error) {
 }
 
 func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D11CaptureFramePool, args *ole.IInspectable) uintptr {
-	fmt.Println("onFrameArrived")
 	_ = (*Direct3D11CaptureFramePool)(unsafe.Pointer(this_))
+
 	frame, err := sender.TryGetNextFrame()
 	if err != nil {
-		os.Stderr.Write([]byte("Error: TryGetNextFrame: " + err.Error()))
+		fmt.Fprintln(os.Stderr, "onFrameArrived: TryGetNextFrame:", err)
 		return 0
 	}
 	defer func() {
-		var close *winrt.IClosable
-		frame.PutQueryInterface(winrt.IClosableID, &close)
-		close.Close()
+		var closable *winrt.IClosable
+		if e := frame.PutQueryInterface(winrt.IClosableID, &closable); e == nil {
+			closable.Close()
+			closable.Release()
+		}
 	}()
 
-	// Do conversions here
-	fmt.Println("Got a frame?", frame)
+	// Only save the very first frame so we can inspect the output without
+	// flooding the disk at 60 fps.
+	if c.savedFirstFrame {
+		return 0
+	}
+
+	// -----------------------------------------------------------------------
+	// Step 1 – WinRT surface → IDirect3DDXGIInterfaceAccess → ID3D11Texture2D
+	// -----------------------------------------------------------------------
 
 	surface, err := Surface(frame)
 	if err != nil {
-		fmt.Println(fmt.Errorf("Error making surface %w", err))
+		fmt.Fprintln(os.Stderr, "onFrameArrived: Surface:", err)
 		return 0
 	}
 	defer surface.Release()
 
-	// 3. Get the Texture2D
+	// QI the WinRT surface for the DXGI bridge interface.
+	var dxgiAccess *IDirect3DDXGIInterfaceAccess
+	if err = surface.PutQueryInterface(IDirect3DDXGIInterfaceAccessID, &dxgiAccess); err != nil {
+		fmt.Fprintln(os.Stderr, "onFrameArrived: QI IDirect3DDXGIInterfaceAccess:", err)
+		return 0
+	}
+	defer dxgiAccess.Release()
+
+	// Use the bridge to get the underlying ID3D11Texture2D.
 	var gpuTexture *ID3D11Texture2D
-	err = surface.PutQueryInterface(IDirect3DDXGIIterfaceAccessID, &gpuTexture)
-	if err != nil {
-		fmt.Println(fmt.Errorf("Error making gpuTexture %w", err))
+	if err = dxgiAccess.GetInterface(ID3D11Texture2DGUID, unsafe.Pointer(&gpuTexture)); err != nil {
+		fmt.Fprintln(os.Stderr, "onFrameArrived: GetInterface ID3D11Texture2D:", err)
 		return 0
 	}
 	defer gpuTexture.Release()
 
+	// -----------------------------------------------------------------------
+	// Step 2 – Create a CPU-readable staging texture with the same dimensions
+	// -----------------------------------------------------------------------
+
+	desc := gpuTexture.GetDesc()
+	fmt.Printf("onFrameArrived: frame %dx%d fmt=%d\n", desc.Width, desc.Height, desc.Format)
+
+	stagingDesc := desc
+	stagingDesc.Usage = D3D11_USAGE_STAGING
+	stagingDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ
+	stagingDesc.BindFlags = 0
+	stagingDesc.MiscFlags = 0
+	stagingDesc.MipLevels = 1
+
+	stagingTex, err := D3D11CreateTexture2D(c.deviceDx, &stagingDesc)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "onFrameArrived: CreateTexture2D (staging):", err)
+		return 0
+	}
+	defer stagingTex.Release()
+
+	// -----------------------------------------------------------------------
+	// Step 3 – GPU-side copy: gpuTexture → stagingTex
+	// -----------------------------------------------------------------------
+
+	ctx := c.deviceDx.GetImmediateContext()
+	defer ctx.Release()
+
+	D3D11CopyResource(ctx, stagingTex, gpuTexture)
+
+	// -----------------------------------------------------------------------
+	// Step 4 – Map the staging texture so the CPU can read it
+	// -----------------------------------------------------------------------
+
+	mapped, err := D3D11Map(ctx, stagingTex, 0, D3D11_MAP_READ, 0)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "onFrameArrived: Map:", err)
+		return 0
+	}
+	// Unmap must always happen, even if we error below.
+	defer D3D11Unmap(ctx, stagingTex, 0)
+
+	// -----------------------------------------------------------------------
+	// Step 5 – Wrap the raw pointer and convert BGRA → RGBA
+	// -----------------------------------------------------------------------
+
+	width := int(desc.Width)
+	height := int(desc.Height)
+	rowPitch := int(mapped.RowPitch)
+	totalBytes := rowPitch * height
+
+	src := unsafe.Slice((*byte)(mapped.PData), totalBytes)
+	img := image.NewRGBA(image.Rect(0, 0, width, height))
+
+	for y := 0; y < height; y++ {
+		srcRow := y * rowPitch
+		dstRow := y * img.Stride
+		for x := 0; x < width; x++ {
+			s := srcRow + x*4
+			d := dstRow + x*4
+			img.Pix[d+0] = src[s+2] // R ← B
+			img.Pix[d+1] = src[s+1] // G ← G
+			img.Pix[d+2] = src[s+0] // B ← R
+			img.Pix[d+3] = src[s+3] // A ← A
+		}
+	}
+
+	// -----------------------------------------------------------------------
+	// Step 6 – Encode and save
+	// -----------------------------------------------------------------------
+
+	f, err := os.Create("frame.png")
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "onFrameArrived: os.Create:", err)
+		return 0
+	}
+	defer f.Close()
+
+	if err = png.Encode(f, img); err != nil {
+		fmt.Fprintln(os.Stderr, "onFrameArrived: png.Encode:", err)
+		return 0
+	}
+
+	fmt.Println("onFrameArrived: saved frame.png")
+	c.savedFirstFrame = true
 	return 0
 }
 
