@@ -229,7 +229,8 @@ var (
 
 	// IDirect3DDXGIInterfaceAccessID is the IID for IDirect3DDxgiInterfaceAccess,
 	// the bridge that lets you unwrap a WinRT surface to its underlying D3D11 object.
-	IDirect3DDXGIInterfaceAccessID = ole.NewGUID("{704C2307-2399-4A34-B3AF-61D027F4D677}")
+	// Source: windows.graphics.directx.direct3d11.interop.h
+	IDirect3DDXGIInterfaceAccessID = ole.NewGUID("{A9B3D012-3DF2-4EE3-B8D1-8695F457D3C1}")
 )
 
 func Surface(v *winrt.IDirect3D11CaptureFrame) (*IDirect3DSurface, error) {
