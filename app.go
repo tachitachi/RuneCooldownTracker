@@ -15,8 +15,9 @@ import (
 
 // App struct
 type App struct {
-	app     *application.App
-	handler *capture.CaptureHandler
+	app           *application.App
+	handler       *capture.CaptureHandler
+	overlayWindow *application.WebviewWindow
 }
 
 // NewApp creates a new App application struct
@@ -62,8 +63,10 @@ func (a *App) EnableClickThrough() {
 
 // followWindow is private — only called from startup, not bound to the frontend.
 func (a *App) followWindow(ctx context.Context, targetTitle string) {
+	user32 := syscall.NewLazyDLL("user32.dll")
+	getDpiForWindow := user32.NewProc("GetDpiForWindow")
+
 	go func() {
-		myHwnd := win.FindWindow(nil, syscall.StringToUTF16Ptr("RuneCooldownTracker"))
 		titlePtr := syscall.StringToUTF16Ptr(targetTitle)
 
 		for {
@@ -75,14 +78,16 @@ func (a *App) followWindow(ctx context.Context, targetTitle string) {
 			}
 
 			targetHwnd := win.FindWindow(nil, titlePtr)
-			if targetHwnd != 0 && myHwnd != 0 {
+			if targetHwnd != 0 {
 				var rect win.RECT
 				if win.GetWindowRect(targetHwnd, &rect) {
-					width := rect.Right - rect.Left
-					height := rect.Bottom - rect.Top
-					win.SetWindowPos(myHwnd, 0,
-						rect.Left, rect.Top, width, height,
-						win.SWP_NOZORDER|win.SWP_NOACTIVATE)
+					dpi, _, _ := getDpiForWindow.Call(uintptr(targetHwnd))
+					if dpi == 0 {
+						dpi = 96
+					}
+					scale := float64(dpi) / 96.0
+					a.overlayWindow.SetPosition(int(float64(rect.Left)/scale), int(float64(rect.Top)/scale))
+					a.overlayWindow.SetSize(int(float64(rect.Right-rect.Left)/scale), int(float64(rect.Bottom-rect.Top)/scale))
 				}
 			}
 
