@@ -6,6 +6,7 @@ import (
 	"image/png"
 	"os"
 	"runtime"
+	"sync"
 	"syscall"
 	"time"
 	"unsafe"
@@ -19,6 +20,10 @@ import (
 
 type FrameProcessor func(img *image.RGBA)
 
+// CropRegion defines a rectangular sub-region in physical pixels.
+// A nil pointer means no crop — the full frame is used.
+type CropRegion struct{ X, Y, W, H int }
+
 type CaptureHandler struct {
 	device                 *winrt.IDirect3DDevice
 	deviceDx               *dx11.ID3D11Device
@@ -29,6 +34,14 @@ type CaptureHandler struct {
 	isRunning              bool
 	savedFirstFrame        bool
 	OnFrame                FrameProcessor
+	cropMu                 sync.Mutex
+	cropRegion             *CropRegion
+}
+
+func (c *CaptureHandler) SetCropRegion(r *CropRegion) {
+	c.cropMu.Lock()
+	c.cropRegion = r
+	c.cropMu.Unlock()
 }
 
 func (c *CaptureHandler) StartCapture(hwnd win.HWND) error {
@@ -372,23 +385,49 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	}
 
 	// -----------------------------------------------------------------------
-	// Step 6 – Encode and save
+	// Step 6 – Debug: save first frame to disk
 	// -----------------------------------------------------------------------
 
-	f, err := os.Create("frame.png")
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "onFrameArrived: os.Create:", err)
-		return 0
+	if !c.savedFirstFrame {
+		f, err := os.Create("frame.png")
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "onFrameArrived: os.Create:", err)
+		} else {
+			defer f.Close()
+			if err = png.Encode(f, img); err != nil {
+				fmt.Fprintln(os.Stderr, "onFrameArrived: png.Encode:", err)
+			} else {
+				fmt.Println("onFrameArrived: saved frame.png")
+			}
+		}
+		c.savedFirstFrame = true
 	}
-	defer f.Close()
 
-	if err = png.Encode(f, img); err != nil {
-		fmt.Fprintln(os.Stderr, "onFrameArrived: png.Encode:", err)
-		return 0
+	// -----------------------------------------------------------------------
+	// Step 7 – Apply crop and dispatch to OnFrame
+	// -----------------------------------------------------------------------
+
+	c.cropMu.Lock()
+	crop := c.cropRegion
+	c.cropMu.Unlock()
+
+	out := image.Image(img)
+	if crop != nil {
+		x0 := max(0, crop.X)
+		y0 := max(0, crop.Y)
+		x1 := min(width, crop.X+crop.W)
+		y1 := min(height, crop.Y+crop.H)
+		if x1 > x0 && y1 > y0 {
+			out = img.SubImage(image.Rect(x0, y0, x1, y1))
+		}
 	}
 
-	fmt.Println("onFrameArrived: saved frame.png")
-	c.savedFirstFrame = true
+	if c.OnFrame != nil {
+		if rgba, ok := out.(*image.RGBA); ok {
+			c.OnFrame(rgba)
+		}
+	}
+
 	return 0
 }
 
