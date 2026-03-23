@@ -9,10 +9,30 @@ import (
 	"time"
 
 	"github.com/tachitachi/RuneCooldownTracker/internal/capture"
+	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/TKMAX777/winapi"
 	"github.com/lxn/win"
 )
+
+func (a *App) createOverlayWindow(app *application.App) {
+	a.overlayWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
+		Title:            "RuneCooldownTracker",
+		Width:            1024,
+		Height:           768,
+		Frameless:        true,
+		AlwaysOnTop:      false,
+		BackgroundType:   application.BackgroundTypeTransparent,
+		BackgroundColour: application.NewRGBA(0, 0, 0, 0),
+		URL:              "/",
+		Windows: application.WindowsWindow{
+			BackdropType: application.None,
+		},
+	})
+
+	a.overlayWindow.SetIgnoreMouseEvents(true)
+	a.overlayWindow.SetAlwaysOnTop(true)
+}
 
 // followWindow tracks the target window's position and size, keeping the
 // overlay aligned with it. Also caches the DPI scale for snipping coordinate math.
