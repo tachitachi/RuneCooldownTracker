@@ -29,10 +29,6 @@ func (a *App) startup(app *application.App) {
 }
 
 func (a *App) shutdown() {
-	fmt.Println("Application shutting down, closing capture handler...")
-	if a.handler != nil {
-		if err := a.handler.Close(); err != nil {
-			fmt.Printf("Error closing handler: %v\n", err)
-		}
-	}
+	fmt.Println("Application shutting down")
+	a.closeGraphics()
 }
