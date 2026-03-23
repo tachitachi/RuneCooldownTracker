@@ -24,6 +24,12 @@ func (a *App) createConfigWindow(app *application.App) {
 		fmt.Println("closing...")
 		a.configWindow = nil
 	})
+
+	a.configWindow.OnWindowEvent(events.Common.WindowShow, func(_ *application.WindowEvent) {
+		if a.handler != nil {
+			a.emitCropRegion()
+		}
+	})
 }
 
 // StartSnipping makes the overlay interactive so the user can drag a capture region.
