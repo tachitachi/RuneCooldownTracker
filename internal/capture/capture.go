@@ -34,7 +34,7 @@ type CaptureHandler struct {
 	isRunning              bool
 	savedFirstFrame        bool
 	OnFrame                FrameProcessor
-	cropMu                 sync.Mutex
+	cropMu                 sync.RWMutex
 	cropRegion             *CropRegion
 }
 
@@ -43,6 +43,10 @@ func (c *CaptureHandler) SetCropRegion(r *CropRegion) {
 	c.cropRegion = r
 	c.savedFirstFrame = false
 	c.cropMu.Unlock()
+}
+
+func (c *CaptureHandler) GetCropRegion() *CropRegion {
+	return c.cropRegion
 }
 
 func (c *CaptureHandler) StartCapture(hwnd win.HWND) error {
@@ -284,9 +288,9 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	}()
 
 	// Skip all GPU work until the user has defined a capture region.
-	c.cropMu.Lock()
+	c.cropMu.RLock()
 	crop := c.cropRegion
-	c.cropMu.Unlock()
+	c.cropMu.RUnlock()
 	if crop == nil {
 		return 0
 	}
