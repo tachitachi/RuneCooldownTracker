@@ -56,7 +56,7 @@ func main() {
 		Title:          "RuneCooldownTracker Config",
 		Width:          480,
 		Height:         320,
-		Hidden:         true,
+		Hidden:         false,
 		BackgroundType: application.BackgroundTypeSolid,
 		URL:            "/config.html",
 	})
