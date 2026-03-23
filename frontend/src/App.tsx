@@ -1,6 +1,6 @@
 import {useState, useEffect, useRef, useCallback} from 'react'
 import {Events} from '@wailsio/runtime'
-import {ConfirmSnip, CancelSnipping} from '../bindings/RuneCooldownTracker/app'
+import {ConfirmSnip, CancelSnipping} from '../bindings/github.com/tachitachi/RuneCooldownTracker/app'
 import './App.css'
 
 interface DragRect {

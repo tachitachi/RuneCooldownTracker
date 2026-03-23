@@ -1,4 +1,4 @@
-module RuneCooldownTracker
+module github.com/tachitachi/RuneCooldownTracker
 
 go 1.25
 
