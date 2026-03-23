@@ -69,3 +69,12 @@ func (a *App) captureGraphics(targetWindow string) {
 		}
 	}()
 }
+
+func (a *App) closeGraphics() {
+	if a.handler != nil {
+		fmt.Println("Closing capture handler...")
+		if err := a.handler.Close(); err != nil {
+			fmt.Printf("Error closing handler: %v\n", err)
+		}
+	}
+}
