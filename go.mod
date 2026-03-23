@@ -1,6 +1,6 @@
 module github.com/tachitachi/RuneCooldownTracker
 
-go 1.25
+go 1.26.1
 
 require (
 	github.com/TKMAX777/winapi v0.0.0-20230418140346-c4565d1e9650
