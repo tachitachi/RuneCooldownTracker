@@ -53,8 +53,8 @@ func detectGrid(img *image.RGBA) SlotLayout {
 	colProj := projection(img, true)  // per-column mean brightness
 	rowProj := projection(img, false) // per-row mean brightness
 
-	colPeriod := findPeriod(colProj, 16)
-	rowPeriod := findPeriod(rowProj, 16)
+	colPeriod := findPeriod(colProj, 40, 55)
+	rowPeriod := findPeriod(rowProj, 40, 55)
 
 	colPhase := findPhase(colProj, colPeriod)
 	rowPhase := findPhase(rowProj, rowPeriod)
@@ -67,41 +67,52 @@ func detectGrid(img *image.RGBA) SlotLayout {
 	}
 }
 
-// projection collapses the image to a 1D brightness profile along one axis.
-// byColumn=true → result[x] = mean brightness of column x.
-// byColumn=false → result[y] = mean brightness of row y.
+// projection collapses the image to a 1D edge-energy profile along one axis.
+// byColumn=true → result[x] = mean horizontal gradient energy of column x.
+// byColumn=false → result[y] = mean vertical gradient energy of row y.
+// Grid separators produce consistent high-gradient edges regardless of icon content.
 func projection(img *image.RGBA, byColumn bool) []float64 {
 	bounds := img.Rect
 	w, h := bounds.Dx(), bounds.Dy()
 
-	size, other := w, h
-	if !byColumn {
-		size, other = h, w
+	if byColumn {
+		proj := make([]float64, w)
+		for x := 1; x < w; x++ {
+			var sum float64
+			for y := 0; y < h; y++ {
+				r1, g1, b1, _ := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
+				r0, g0, b0, _ := img.At(bounds.Min.X+x-1, bounds.Min.Y+y).RGBA()
+				dr := math.Abs(float64(r1) - float64(r0))
+				dg := math.Abs(float64(g1) - float64(g0))
+				db := math.Abs(float64(b1) - float64(b0))
+				sum += (dr + dg + db) / (3.0 * 65535.0)
+			}
+			proj[x] = sum / float64(h)
+		}
+		return proj
 	}
 
-	proj := make([]float64, size)
-	for i := 0; i < size; i++ {
+	proj := make([]float64, h)
+	for y := 1; y < h; y++ {
 		var sum float64
-		for j := 0; j < other; j++ {
-			var x, y int
-			if byColumn {
-				x, y = bounds.Min.X+i, bounds.Min.Y+j
-			} else {
-				x, y = bounds.Min.X+j, bounds.Min.Y+i
-			}
-			r, g, b, _ := img.At(x, y).RGBA()
-			sum += (float64(r) + float64(g) + float64(b)) / (3.0 * 65535.0)
+		for x := 0; x < w; x++ {
+			r1, g1, b1, _ := img.At(bounds.Min.X+x, bounds.Min.Y+y).RGBA()
+			r0, g0, b0, _ := img.At(bounds.Min.X+x, bounds.Min.Y+y-1).RGBA()
+			dr := math.Abs(float64(r1) - float64(r0))
+			dg := math.Abs(float64(g1) - float64(g0))
+			db := math.Abs(float64(b1) - float64(b0))
+			sum += (dr + dg + db) / (3.0 * 65535.0)
 		}
-		proj[i] = sum / float64(other)
+		proj[y] = sum / float64(w)
 	}
 	return proj
 }
 
 // findPeriod finds the dominant period in proj using autocorrelation.
 // minPeriod is the smallest slot size (in pixels) to consider.
-func findPeriod(proj []float64, minPeriod int) int {
+func findPeriod(proj []float64, minPeriod, maxPeriod int) int {
 	n := len(proj)
-	maxPeriod := n / 2
+	// maxPeriod := n / 2
 	if maxPeriod < minPeriod {
 		return n // not enough data — treat whole axis as one slot
 	}
@@ -129,7 +140,7 @@ func findPeriod(proj []float64, minPeriod int) int {
 }
 
 // findPhase folds the projection modulo the period and returns the index of the
-// brightest recurring feature — typically the slot separator.
+// highest edge energy — the slot separator position.
 func findPhase(proj []float64, period int) int {
 	if period <= 0 {
 		return 0
