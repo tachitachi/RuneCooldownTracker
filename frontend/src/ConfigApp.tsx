@@ -1,6 +1,6 @@
 import {useState, useEffect} from 'react'
 import {Events} from '@wailsio/runtime'
-import {StartSnipping} from '../bindings/github.com/tachitachi/RuneCooldownTracker/app'
+import {StartSnipping} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
 
 interface SnipRegion {
     x: number

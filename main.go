@@ -4,6 +4,7 @@ import (
 	"embed"
 	"log"
 
+	"github.com/tachitachi/RuneCooldownTracker/internal/app"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -15,7 +16,7 @@ var assets embed.FS
 var trayIcon []byte
 
 func main() {
-	appService := NewApp()
+	appService := app.NewApp()
 
 	app := application.New(application.Options{
 		Name:        "RuneCooldownTracker",
@@ -27,16 +28,16 @@ func main() {
 			application.NewService(appService),
 		},
 		OnShutdown: func() {
-			appService.shutdown()
+			appService.Shutdown()
 		},
 	})
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(_ *application.ApplicationEvent) {
-		appService.startup(app)
+		appService.Startup(app)
 	})
 
-	appService.createOverlayWindow(app)
-	appService.createConfigWindow(app)
+	appService.CreateOverlayWindow(app)
+	appService.CreateConfigWindow(app)
 
 	tray := app.SystemTray.New()
 	tray.SetIcon(trayIcon)
@@ -44,9 +45,7 @@ func main() {
 
 	menu := app.NewMenu()
 	menu.Add("Open Config").OnClick(func(_ *application.Context) {
-		if appService.configWindow == nil {
-			appService.createConfigWindow(app)
-		}
+		appService.CreateConfigWindow(app)
 	})
 	menu.Add("Quit").OnClick(func(_ *application.Context) {
 		app.Quit()

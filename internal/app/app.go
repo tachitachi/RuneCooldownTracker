@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -22,13 +22,13 @@ func NewApp() *App {
 }
 
 // startup is called from the ApplicationStarted event in main.go.
-func (a *App) startup(app *application.App) {
+func (a *App) Startup(app *application.App) {
 	a.app = app
 	a.followWindow(app.Context(), "RuneScape")
 	a.captureGraphics("RuneScape")
 }
 
-func (a *App) shutdown() {
+func (a *App) Shutdown() {
 	fmt.Println("Application shutting down")
 	a.closeGraphics()
 }

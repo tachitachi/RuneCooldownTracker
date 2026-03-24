@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"fmt"
@@ -10,7 +10,11 @@ import (
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
 
-func (a *App) createConfigWindow(app *application.App) {
+func (a *App) CreateConfigWindow(app *application.App) {
+	if a.configWindow != nil {
+		return
+	}
+
 	a.configWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:          "RuneCooldownTracker Config",
 		Width:          480,

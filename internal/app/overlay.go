@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -9,13 +9,14 @@ import (
 	"time"
 
 	"github.com/tachitachi/RuneCooldownTracker/internal/capture"
+	"github.com/tachitachi/RuneCooldownTracker/internal/detection"
 	"github.com/wailsapp/wails/v3/pkg/application"
 
 	"github.com/TKMAX777/winapi"
 	"github.com/lxn/win"
 )
 
-func (a *App) createOverlayWindow(app *application.App) {
+func (a *App) CreateOverlayWindow(app *application.App) {
 	a.overlayWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "RuneCooldownTracker",
 		Width:            1024,
@@ -81,7 +82,9 @@ func (a *App) captureGraphics(targetWindow string) {
 	}
 	fmt.Printf("Found target window: %d\n", rdHwnd)
 
-	a.handler = &capture.CaptureHandler{}
+	a.handler = &capture.CaptureHandler{
+		Processor: &detection.AbilityDetector{},
+	}
 
 	go func() {
 		if err := a.handler.StartCapture(rdHwnd); err != nil {

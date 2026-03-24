@@ -18,7 +18,9 @@ import (
 	"github.com/pkg/errors"
 )
 
-type FrameProcessor func(img *image.RGBA)
+type FrameProcessor interface {
+	ProcessFrame(img *image.RGBA)
+}
 
 // CropRegion defines a rectangular sub-region in physical pixels.
 // A nil pointer means no crop — the full frame is used.
@@ -33,7 +35,7 @@ type CaptureHandler struct {
 	framePoolToken         *winrt.EventRegistrationToken
 	isRunning              bool
 	savedFirstFrame        bool
-	OnFrame                FrameProcessor
+	Processor              FrameProcessor
 	cropMu                 sync.RWMutex
 	cropRegion             *CropRegion
 }
@@ -423,8 +425,9 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	// Step 7 – Dispatch to OnFrame
 	// -----------------------------------------------------------------------
 
-	if c.OnFrame != nil {
-		c.OnFrame(img)
+	if c.Processor != nil {
+		fmt.Println("passing a frame to OnFrame...")
+		c.Processor.ProcessFrame(img)
 	}
 
 	return 0
