@@ -1,32 +1,28 @@
-import {useState, useEffect, useRef, useCallback} from 'react'
+import {useState, useEffect, useCallback} from 'react'
 import {Events} from '@wailsio/runtime'
 import {ConfirmSnip, CancelSnipping} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
 import './App.css'
-
-interface DragRect {
-    x: number
-    y: number
-    w: number
-    h: number
-}
 
 interface GridLines {
     xLines: number[]
     yLines: number[]
 }
 
+// Padding added around the two clicked points (logical px).
+// One slot is ~27–54 logical px depending on DPI; 60 px safely covers the
+// full outermost slot on each side at any common DPI scale.
+const SNIP_MARGIN = 30
+
 export default function App() {
     const [snipping, setSnipping] = useState(false)
-    const [rect, setRect] = useState<DragRect | null>(null)
+    const [firstClick, setFirstClick] = useState<{x: number; y: number} | null>(null)
     const [gridLines, setGridLines] = useState<GridLines | null>(null)
-    const startRef = useRef<{x: number; y: number} | null>(null)
-    const isDrawing = useRef(false)
 
     // Listen for snipping:start from Go
     useEffect(() => {
         const off = Events.On('snipping:start', () => {
             setSnipping(true)
-            setRect(null)
+            setFirstClick(null)
         })
         return () => off()
     }, [])
@@ -39,51 +35,45 @@ export default function App() {
         return () => off()
     }, [])
 
-    // Keyboard: Enter/F1 to confirm, Escape to cancel
+    // Escape to cancel at any point
     useEffect(() => {
         if (!snipping) return
         const onKey = (e: KeyboardEvent) => {
-            if (e.key === 'Enter' || e.key === 'F1') {
-                e.preventDefault()
-                if (rect && rect.w > 0 && rect.h > 0) {
-                    ConfirmSnip(rect.x, rect.y, rect.w, rect.h)
-                    setSnipping(false)
-                    setRect(null)
-                }
-            } else if (e.key === 'Escape') {
+            if (e.key === 'Escape') {
                 CancelSnipping()
                 setSnipping(false)
-                setRect(null)
+                setFirstClick(null)
             }
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-    }, [snipping, rect])
+    }, [snipping])
 
     const onMouseDown = useCallback((e: React.MouseEvent) => {
-        startRef.current = {x: e.clientX, y: e.clientY}
-        isDrawing.current = true
-        setRect({x: e.clientX, y: e.clientY, w: 0, h: 0})
-    }, [])
-
-    const onMouseMove = useCallback((e: React.MouseEvent) => {
-        if (!isDrawing.current || !startRef.current) return
-        const sx = startRef.current.x
-        const sy = startRef.current.y
-        setRect({
-            x: Math.min(sx, e.clientX),
-            y: Math.min(sy, e.clientY),
-            w: Math.abs(e.clientX - sx),
-            h: Math.abs(e.clientY - sy),
-        })
-    }, [])
-
-    const onMouseUp = useCallback(() => {
-        isDrawing.current = false
-    }, [])
+        if (!firstClick) {
+            // First click: record top-left ability position
+            setFirstClick({x: e.clientX, y: e.clientY})
+        } else {
+            // Second click: expand to cover both slots fully, then confirm
+            const x1 = Math.min(firstClick.x, e.clientX)
+            const y1 = Math.min(firstClick.y, e.clientY)
+            const x2 = Math.max(firstClick.x, e.clientX)
+            const y2 = Math.max(firstClick.y, e.clientY)
+            ConfirmSnip(
+                x1 - SNIP_MARGIN,
+                y1 - SNIP_MARGIN,
+                (x2 - x1) + 1.5 * SNIP_MARGIN,
+                (y2 - y1) + 1.5 * SNIP_MARGIN,
+            )
+            setSnipping(false)
+            setFirstClick(null)
+        }
+    }, [firstClick])
 
     if (snipping) {
-        const hasRect = rect && rect.w > 0 && rect.h > 0
+        const instruction = firstClick
+            ? 'Click on the bottom-right ability — Escape to cancel'
+            : 'Click on the top-left ability — Escape to cancel'
         return (
             <div
                 style={{
@@ -92,24 +82,19 @@ export default function App() {
                     background: 'rgba(0, 0, 0, 0.45)',
                     cursor: 'crosshair',
                     userSelect: 'none',
-                    border: '1px solid red',
                 }}
                 onMouseDown={onMouseDown}
-                onMouseMove={onMouseMove}
-                onMouseUp={onMouseUp}
             >
-                {hasRect && (
+                {firstClick && (
                     <div
                         style={{
                             position: 'fixed',
-                            left: rect!.x,
-                            top: rect!.y,
-                            width: rect!.w,
-                            height: rect!.h,
-                            border: '2px solid #00aaff',
-                            boxShadow: '0 0 0 9999px rgba(0,0,0,0.45)',
-                            background: 'rgba(0,170,255,0.1)',
-                            boxSizing: 'border-box',
+                            left: firstClick.x - 6,
+                            top: firstClick.y - 6,
+                            width: 12,
+                            height: 12,
+                            borderRadius: '50%',
+                            background: '#00aaff',
                             pointerEvents: 'none',
                         }}
                     />
@@ -129,7 +114,7 @@ export default function App() {
                         whiteSpace: 'nowrap',
                     }}
                 >
-                    Drag to select area — Enter/F1 to confirm, Escape to cancel
+                    {instruction}
                 </div>
             </div>
         )
