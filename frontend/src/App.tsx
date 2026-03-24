@@ -10,9 +10,15 @@ interface DragRect {
     h: number
 }
 
+interface GridLines {
+    xLines: number[]
+    yLines: number[]
+}
+
 export default function App() {
     const [snipping, setSnipping] = useState(false)
     const [rect, setRect] = useState<DragRect | null>(null)
+    const [gridLines, setGridLines] = useState<GridLines | null>(null)
     const startRef = useRef<{x: number; y: number} | null>(null)
     const isDrawing = useRef(false)
 
@@ -21,6 +27,14 @@ export default function App() {
         const off = Events.On('snipping:start', () => {
             setSnipping(true)
             setRect(null)
+        })
+        return () => off()
+    }, [])
+
+    // Listen for grid detection results from Go
+    useEffect(() => {
+        const off = Events.On('grid:detected', (ev: any) => {
+            setGridLines(ev.data)
         })
         return () => off()
     }, [])
@@ -75,9 +89,10 @@ export default function App() {
                 style={{
                     position: 'fixed',
                     inset: 0,
-                    background: 'rgba(0,0,0,0.45)',
+                    background: 'rgba(0, 0, 0, 0.45)',
                     cursor: 'crosshair',
                     userSelect: 'none',
+                    border: '1px solid red',
                 }}
                 onMouseDown={onMouseDown}
                 onMouseMove={onMouseMove}
@@ -123,7 +138,30 @@ export default function App() {
     // Normal overlay content (transparent, non-interactive)
     return (
         <div id="App">
-            {/* ability cooldown HUD will go here */}
+            {gridLines?.xLines.map((x, i) => (
+                <div key={`gx${i}`} style={{
+                    position: 'fixed',
+                    left: x,
+                    top: 0,
+                    width: 1,
+                    height: '100vh',
+                    background: '#ffff00',
+                    opacity: 0.8,
+                    pointerEvents: 'none',
+                }}/>
+            ))}
+            {gridLines?.yLines.map((y, i) => (
+                <div key={`gy${i}`} style={{
+                    position: 'fixed',
+                    left: 0,
+                    top: y,
+                    width: '100vw',
+                    height: 1,
+                    background: '#ffff00',
+                    opacity: 0.8,
+                    pointerEvents: 'none',
+                }}/>
+            ))}
         </div>
     )
 }

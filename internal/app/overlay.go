@@ -82,8 +82,34 @@ func (a *App) captureGraphics(targetWindow string) {
 	}
 	fmt.Printf("Found target window: %d\n", rdHwnd)
 
+	detector := &detection.AbilityDetector{}
+	detector.OnLayoutDetected = func(layout detection.SlotLayout) {
+		scale := math.Float64frombits(uint64(atomic.LoadInt64(&a.dpiScale)))
+		if scale == 0 {
+			scale = 1.0
+		}
+		crop := a.handler.GetCropRegion()
+		if crop == nil {
+			return
+		}
+
+		var xLines []float64
+		for x := layout.ColPhase; x <= crop.W; x += layout.ColPeriod {
+			xLines = append(xLines, float64(crop.X+x)/scale)
+		}
+		var yLines []float64
+		for y := layout.RowPhase; y <= crop.H; y += layout.RowPeriod {
+			yLines = append(yLines, float64(crop.Y+y)/scale)
+		}
+
+		a.app.Event.Emit("grid:detected", map[string]any{
+			"xLines": xLines,
+			"yLines": yLines,
+		})
+	}
+
 	a.handler = &capture.CaptureHandler{
-		Processor: &detection.AbilityDetector{},
+		Processor: detector,
 	}
 
 	go func() {
