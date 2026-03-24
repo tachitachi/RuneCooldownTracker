@@ -426,7 +426,6 @@ func (c *CaptureHandler) onFrameArrived(this_ *uintptr, sender *winrt.IDirect3D1
 	// -----------------------------------------------------------------------
 
 	if c.Processor != nil {
-		fmt.Println("passing a frame to OnFrame...")
 		c.Processor.ProcessFrame(img)
 	}
 

@@ -1,6 +1,7 @@
 package detection
 
 import (
+	"fmt"
 	"image"
 	"math"
 )
@@ -40,6 +41,7 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	// Re-detect whenever the first frame arrives or the crop size changes.
 	if ad.layout == nil || img.Rect != ad.lastRect {
 		layout := detectGrid(img)
+		fmt.Printf("Got grid: %s\n", layout)
 		ad.layout = &layout
 		ad.lastRect = img.Rect
 		if ad.OnLayoutDetected != nil {
@@ -50,14 +52,13 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 }
 
 func detectGrid(img *image.RGBA) SlotLayout {
-	colProj := smooth(projection(img, true), 8)  // per-column edge energy, smoothed
-	rowProj := smooth(projection(img, false), 8) // per-row edge energy, smoothed
+	// Smooth the gradient projection to merge the double-spike each thick border
+	// produces into a single broad peak before scoring.
+	colProj := smooth(projection(img, true), 4)
+	rowProj := smooth(projection(img, false), 4)
 
-	colPeriod := findPeriod(colProj, 40, 60)
-	rowPeriod := findPeriod(rowProj, 40, 60)
-
-	colPhase := findPhase(colProj, colPeriod)
-	rowPhase := findPhase(rowProj, rowPeriod)
+	colPeriod, colPhase := findPeriodAndPhase(colProj, 54, 54)
+	rowPeriod, rowPhase := findPeriodAndPhase(rowProj, 58, 58)
 
 	return SlotLayout{
 		ColPeriod: colPeriod,
@@ -108,38 +109,7 @@ func projection(img *image.RGBA, byColumn bool) []float64 {
 	return proj
 }
 
-// findPeriod finds the dominant period in proj using autocorrelation.
-// minPeriod is the smallest slot size (in pixels) to consider.
-func findPeriod(proj []float64, minPeriod, maxPeriod int) int {
-	n := len(proj)
-	// maxPeriod := n / 2
-	if maxPeriod < minPeriod {
-		return n // not enough data — treat whole axis as one slot
-	}
-
-	var mean float64
-	for _, v := range proj {
-		mean += v
-	}
-	mean /= float64(n)
-
-	bestLag, bestVal := minPeriod, math.Inf(-1)
-	for lag := minPeriod; lag <= maxPeriod; lag++ {
-		count := n - lag
-		var sum float64
-		for i := 0; i < count; i++ {
-			sum += (proj[i] - mean) * (proj[i+lag] - mean)
-		}
-		val := sum / float64(count)
-		if val > bestVal {
-			bestVal = val
-			bestLag = lag
-		}
-	}
-	return bestLag
-}
-
-// smooth applies a box filter of the given half-width to proj.
+// smooth applies a box filter of the given radius to proj.
 func smooth(proj []float64, radius int) []float64 {
 	n := len(proj)
 	out := make([]float64, n)
@@ -158,22 +128,50 @@ func smooth(proj []float64, radius int) []float64 {
 	return out
 }
 
-// findPhase folds the projection modulo the period and returns the index of the
-// highest edge energy — the slot separator position.
-func findPhase(proj []float64, period int) int {
-	if period <= 0 {
-		return 0
+// findPeriodAndPhase tries every (period, phase) pair in the candidate range and
+// picks the one where the comb teeth have the highest average gradient energy
+// relative to the overall mean. This directly measures "how well does a regular
+// comb at this period+phase align with the actual separator edges?" and is robust
+// to extra non-grid content at the edges of the capture area.
+func findPeriodAndPhase(proj []float64, minPeriod, maxPeriod int) (period, phase int) {
+	n := len(proj)
+	if n == 0 || maxPeriod < minPeriod {
+		return minPeriod, 0
 	}
-	folded := make([]float64, period)
-	for i, v := range proj {
-		folded[i%period] += v
+
+	var totalSum float64
+	for _, v := range proj {
+		totalSum += v
 	}
-	maxVal, maxIdx := math.Inf(-1), 0
-	for i, v := range folded {
-		if v > maxVal {
-			maxVal = v
-			maxIdx = i
+	meanVal := totalSum / float64(n)
+	if meanVal == 0 {
+		return minPeriod, 0
+	}
+
+	bestScore := math.Inf(-1)
+	bestPeriod, bestPhase := minPeriod, 0
+
+	for p := minPeriod; p <= maxPeriod; p++ {
+		for ph := 0; ph < p; ph++ {
+			var sum float64
+			var count int
+			for pos := ph; pos < n; pos += p {
+				sum += proj[pos]
+				count++
+			}
+			// Require at least 3 teeth so a single bright spike can't win.
+			if count < 3 {
+				continue
+			}
+			// Score: mean tooth energy relative to the image average.
+			// A score > 1 means the teeth are above the background level.
+			score := (sum / float64(count)) / meanVal
+			if score > bestScore {
+				bestScore = score
+				bestPeriod = p
+				bestPhase = ph
+			}
 		}
 	}
-	return maxIdx
+	return bestPeriod, bestPhase
 }
