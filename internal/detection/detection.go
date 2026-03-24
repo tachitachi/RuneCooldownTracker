@@ -50,11 +50,11 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 }
 
 func detectGrid(img *image.RGBA) SlotLayout {
-	colProj := projection(img, true)  // per-column mean brightness
-	rowProj := projection(img, false) // per-row mean brightness
+	colProj := smooth(projection(img, true), 8)  // per-column edge energy, smoothed
+	rowProj := smooth(projection(img, false), 8) // per-row edge energy, smoothed
 
-	colPeriod := findPeriod(colProj, 40, 55)
-	rowPeriod := findPeriod(rowProj, 40, 55)
+	colPeriod := findPeriod(colProj, 40, 60)
+	rowPeriod := findPeriod(rowProj, 40, 60)
 
 	colPhase := findPhase(colProj, colPeriod)
 	rowPhase := findPhase(rowProj, rowPeriod)
@@ -137,6 +137,25 @@ func findPeriod(proj []float64, minPeriod, maxPeriod int) int {
 		}
 	}
 	return bestLag
+}
+
+// smooth applies a box filter of the given half-width to proj.
+func smooth(proj []float64, radius int) []float64 {
+	n := len(proj)
+	out := make([]float64, n)
+	for i := range proj {
+		var sum float64
+		var count int
+		for d := -radius; d <= radius; d++ {
+			j := i + d
+			if j >= 0 && j < n {
+				sum += proj[j]
+				count++
+			}
+		}
+		out[i] = sum / float64(count)
+	}
+	return out
 }
 
 // findPhase folds the projection modulo the period and returns the index of the
