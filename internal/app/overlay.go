@@ -19,8 +19,8 @@ import (
 func (a *App) CreateOverlayWindow(app *application.App) {
 	a.overlayWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "RuneCooldownTracker",
-		Width:            1024,
-		Height:           768,
+		Width:            3840, // for some reason this needs to start large, so that the snipping can interact with the whole screen after resizsing
+		Height:           2160,
 		Frameless:        true,
 		AlwaysOnTop:      true,
 		BackgroundType:   application.BackgroundTypeTransparent,
