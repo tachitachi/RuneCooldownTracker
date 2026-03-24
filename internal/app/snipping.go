@@ -2,6 +2,7 @@ package app
 
 import (
 	"fmt"
+	"image"
 	"math"
 	"sync/atomic"
 
@@ -51,9 +52,10 @@ func (a *App) emitCropRegion() {
 	}
 }
 
-// ConfirmSnip receives the logical-pixel rect from JS, converts to physical pixels,
-// stores the crop region, and restores click-through on the overlay.
-func (a *App) ConfirmSnip(x, y, w, h float64) {
+// ConfirmSnip receives the logical-pixel rect and the first click offset from JS,
+// converts to physical pixels, stores the crop region, and restores click-through.
+// firstClickX/Y are the first click position relative to the crop top-left in logical pixels.
+func (a *App) ConfirmSnip(x, y, w, h, firstClickX, firstClickY float64) {
 	scale := math.Float64frombits(uint64(atomic.LoadInt64(&a.dpiScale)))
 	if scale == 0 {
 		scale = 1.0
@@ -63,6 +65,13 @@ func (a *App) ConfirmSnip(x, y, w, h float64) {
 		Y: int(math.Round(y * scale)),
 		W: int(math.Round(w * scale)),
 		H: int(math.Round(h * scale)),
+	}
+	a.clickInCrop = image.Point{
+		X: int(math.Round(firstClickX * scale)),
+		Y: int(math.Round(firstClickY * scale)),
+	}
+	if a.detector != nil {
+		a.detector.ClickHint = &a.clickInCrop
 	}
 	if a.handler != nil {
 		a.handler.SetCropRegion(region)

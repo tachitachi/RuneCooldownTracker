@@ -2,8 +2,10 @@ package app
 
 import (
 	"fmt"
+	"image"
 
 	"github.com/tachitachi/RuneCooldownTracker/internal/capture"
+	"github.com/tachitachi/RuneCooldownTracker/internal/detection"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
 )
@@ -12,9 +14,11 @@ import (
 type App struct {
 	app           *application.App
 	handler       *capture.CaptureHandler
+	detector      *detection.AbilityDetector
 	overlayWindow *application.WebviewWindow
 	configWindow  *application.WebviewWindow
-	dpiScale      int64 // atomic; stores math.Float64bits of current DPI scale
+	dpiScale      int64      // atomic; stores math.Float64bits of current DPI scale
+	clickInCrop   image.Point // first click relative to crop in physical pixels
 }
 
 func NewApp() *App {

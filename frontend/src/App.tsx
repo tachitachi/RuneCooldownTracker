@@ -62,8 +62,10 @@ export default function App() {
             ConfirmSnip(
                 x1 - SNIP_MARGIN,
                 y1 - SNIP_MARGIN,
-                (x2 - x1) + 1.5 * SNIP_MARGIN,
-                (y2 - y1) + 1.5 * SNIP_MARGIN,
+                (x2 - x1) + 2 * SNIP_MARGIN,
+                (y2 - y1) + 2 * SNIP_MARGIN,
+                SNIP_MARGIN, // first click x-offset from crop left (always SNIP_MARGIN)
+                SNIP_MARGIN, // first click y-offset from crop top  (always SNIP_MARGIN)
             )
             setSnipping(false)
             setFirstClick(null)

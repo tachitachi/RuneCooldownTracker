@@ -82,8 +82,8 @@ func (a *App) captureGraphics(targetWindow string) {
 	}
 	fmt.Printf("Found target window: %d\n", rdHwnd)
 
-	detector := &detection.AbilityDetector{}
-	detector.OnLayoutDetected = func(layout detection.SlotLayout) {
+	a.detector = &detection.AbilityDetector{}
+	a.detector.OnLayoutDetected = func(layout detection.SlotLayout) {
 		scale := math.Float64frombits(uint64(atomic.LoadInt64(&a.dpiScale)))
 		if scale == 0 {
 			scale = 1.0
@@ -109,7 +109,7 @@ func (a *App) captureGraphics(targetWindow string) {
 	}
 
 	a.handler = &capture.CaptureHandler{
-		Processor: detector,
+		Processor: a.detector,
 	}
 
 	go func() {

@@ -34,14 +34,19 @@ func (l SlotLayout) NumRows(height int) int {
 type AbilityDetector struct {
 	layout           *SlotLayout
 	lastRect         image.Rectangle
+	// ClickHint is the first user click inside the top-left ability slot,
+	// in crop-relative physical pixels. When set, the phase search is constrained
+	// so the click always falls inside a valid slot, which prevents the top row
+	// from being skipped when its border is absent or weak.
+	ClickHint        *image.Point
 	OnLayoutDetected func(layout SlotLayout)
 }
 
 func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	// Re-detect whenever the first frame arrives or the crop size changes.
 	if ad.layout == nil || img.Rect != ad.lastRect {
-		layout := detectGrid(img)
-		fmt.Printf("Got grid: %s\n", layout)
+		layout := detectGrid(img, ad.ClickHint)
+		fmt.Printf("Got grid: %v\n", layout)
 		ad.layout = &layout
 		ad.lastRect = img.Rect
 		if ad.OnLayoutDetected != nil {
@@ -51,14 +56,20 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	// TODO: per-slot cooldown detection using ad.layout
 }
 
-func detectGrid(img *image.RGBA) SlotLayout {
+func detectGrid(img *image.RGBA, hint *image.Point) SlotLayout {
 	// Smooth the gradient projection to merge the double-spike each thick border
 	// produces into a single broad peak before scoring.
 	colProj := smooth(projection(img, true), 4)
 	rowProj := smooth(projection(img, false), 4)
 
-	colPeriod, colPhase := findPeriodAndPhase(colProj, 54, 54)
-	rowPeriod, rowPhase := findPeriodAndPhase(rowProj, 58, 58)
+	colHint, rowHint := -1, -1
+	if hint != nil {
+		colHint = hint.X
+		rowHint = hint.Y
+	}
+
+	colPeriod, colPhase := findPeriodAndPhase(colProj, 54, 54, colHint)
+	rowPeriod, rowPhase := findPeriodAndPhase(rowProj, 58, 58, rowHint)
 
 	return SlotLayout{
 		ColPeriod: colPeriod,
@@ -130,10 +141,14 @@ func smooth(proj []float64, radius int) []float64 {
 
 // findPeriodAndPhase tries every (period, phase) pair in the candidate range and
 // picks the one where the comb teeth have the highest average gradient energy
-// relative to the overall mean. This directly measures "how well does a regular
-// comb at this period+phase align with the actual separator edges?" and is robust
-// to extra non-grid content at the edges of the capture area.
-func findPeriodAndPhase(proj []float64, minPeriod, maxPeriod int) (period, phase int) {
+// relative to the overall mean.
+//
+// hint, when >= 0, is a position known to be inside the first slot (the first
+// user click relative to the crop). Only phases satisfying
+//   phase ≤ hint < phase + period
+// are considered, which guarantees the detected grid includes a border above the
+// first slot even when that border has no visible gradient (e.g. absent top row border).
+func findPeriodAndPhase(proj []float64, minPeriod, maxPeriod, hint int) (period, phase int) {
 	n := len(proj)
 	if n == 0 || maxPeriod < minPeriod {
 		return minPeriod, 0
@@ -152,7 +167,19 @@ func findPeriodAndPhase(proj []float64, minPeriod, maxPeriod int) (period, phase
 	bestPeriod, bestPhase := minPeriod, 0
 
 	for p := minPeriod; p <= maxPeriod; p++ {
-		for ph := 0; ph < p; ph++ {
+		// Constrain phase range so the hint position falls inside the first slot:
+		//   phase ≤ hint  AND  hint < phase + p  →  hint - p + 1 ≤ phase ≤ hint
+		phMin, phMax := 0, p-1
+		if hint >= 0 {
+			if hint-p+1 > phMin {
+				phMin = hint - p + 1
+			}
+			if hint < phMax {
+				phMax = hint
+			}
+		}
+
+		for ph := phMin; ph <= phMax; ph++ {
 			var sum float64
 			var count int
 			for pos := ph; pos < n; pos += p {
