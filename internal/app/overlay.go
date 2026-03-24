@@ -22,7 +22,7 @@ func (a *App) CreateOverlayWindow(app *application.App) {
 		Width:            1024,
 		Height:           768,
 		Frameless:        true,
-		AlwaysOnTop:      false,
+		AlwaysOnTop:      true,
 		BackgroundType:   application.BackgroundTypeTransparent,
 		BackgroundColour: application.NewRGBA(0, 0, 0, 0),
 		URL:              "/",
