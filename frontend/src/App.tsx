@@ -8,6 +8,24 @@ interface GridLines {
     yLines: number[]
 }
 
+interface SlotState {
+    col: number
+    row: number
+    x: number
+    y: number
+    w: number
+    h: number
+    state: number  // 0=ready, 1=cooldown, 2=no_resources, 3=unknown
+}
+
+// STATE_COLORS maps AbilityState int values to overlay tint colours.
+const STATE_COLORS: Record<number, string> = {
+    0: '#00ff0033', // ready      — green tint
+    1: '#ff000066', // cooldown   — red tint
+    2: '#ffa50066', // no resources — orange tint
+    3: '#88888833', // unknown    — grey tint
+}
+
 // Padding added around the two clicked points (logical px).
 // One slot is ~27–54 logical px depending on DPI; 60 px safely covers the
 // full outermost slot on each side at any common DPI scale.
@@ -17,6 +35,7 @@ export default function App() {
     const [snipping, setSnipping] = useState(false)
     const [firstClick, setFirstClick] = useState<{x: number; y: number} | null>(null)
     const [gridLines, setGridLines] = useState<GridLines | null>(null)
+    const [slotStates, setSlotStates] = useState<Map<string, SlotState>>(new Map())
 
     // Listen for snipping:start from Go
     useEffect(() => {
@@ -31,6 +50,21 @@ export default function App() {
     useEffect(() => {
         const off = Events.On('grid:detected', (ev: any) => {
             setGridLines(ev.data)
+        })
+        return () => off()
+    }, [])
+
+    // Listen for per-slot state updates from Go
+    useEffect(() => {
+        const off = Events.On('tracking:states', (ev: any) => {
+            const updates: SlotState[] = ev.data
+            setSlotStates(prev => {
+                const next = new Map(prev)
+                for (const s of updates) {
+                    next.set(`${s.col}_${s.row}`, s)
+                }
+                return next
+            })
         })
         return () => off()
     }, [])
@@ -131,6 +165,17 @@ export default function App() {
     // Normal overlay content (transparent, non-interactive)
     return (
         <div id="App">
+            {Array.from(slotStates.values()).map(s => (
+                <div key={`ss_${s.col}_${s.row}`} style={{
+                    position: 'fixed',
+                    left: s.x + offsetCorrections.x,
+                    top: s.y + offsetCorrections.y,
+                    width: s.w,
+                    height: s.h,
+                    background: STATE_COLORS[s.state] ?? STATE_COLORS[3],
+                    pointerEvents: 'none',
+                }}/>
+            ))}
             {gridLines?.xLines.map((x, i) => (
                 <div key={`gx${i}`} style={{
                     position: 'fixed',

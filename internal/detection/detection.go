@@ -5,6 +5,8 @@ import (
 	"image"
 	"math"
 	"sync"
+
+	"github.com/corona10/goimagehash"
 )
 
 // SlotLayout describes the detected grid in physical pixels relative to the crop region.
@@ -33,17 +35,24 @@ func (l SlotLayout) NumRows(height int) int {
 
 // AbilityDetector detects the action bar slot grid and processes frames.
 type AbilityDetector struct {
-	layout           *SlotLayout
-	lastRect         image.Rectangle
+	layout    *SlotLayout
+	lastRect  image.Rectangle
 	// ClickHint is the first user click inside the top-left ability slot,
 	// in crop-relative physical pixels. When set, the phase search is constrained
 	// so the click always falls inside a valid slot, which prevents the top row
 	// from being skipped when its border is absent or weak.
 	ClickHint        *image.Point
 	OnLayoutDetected func(layout SlotLayout)
+	OnStateChange    func(states SlotStateMap)
 
 	frameMu   sync.RWMutex
 	lastFrame *image.RGBA
+
+	trackingMu sync.RWMutex
+	tracking   bool
+	slotRefs   map[SlotKey]slotReference
+	refHashes  map[string]*goimagehash.ImageHash
+	lastStates map[SlotKey]AbilityState
 }
 
 func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
@@ -64,7 +73,61 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 			ad.OnLayoutDetected(layout)
 		}
 	}
-	// TODO: per-slot cooldown detection using ad.layout
+
+	// Phase B: per-frame state detection when tracking is active.
+	ad.trackingMu.RLock()
+	isTracking := ad.tracking
+	refs := ad.slotRefs
+	ad.trackingMu.RUnlock()
+
+	if !isTracking || ad.layout == nil || len(refs) == 0 {
+		return
+	}
+
+	changed := SlotStateMap{}
+	for key, ref := range refs {
+		if ref.name == "unknown" {
+			continue
+		}
+		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
+		refImg := loadRefImage(ref.name)
+		if refImg == nil {
+			continue
+		}
+		state := detectSlotState(slot, refImg)
+
+		ad.trackingMu.RLock()
+		prev, hasPrev := ad.lastStates[key]
+		ad.trackingMu.RUnlock()
+
+		if !hasPrev || prev != state {
+			changed[key] = state
+			ad.trackingMu.Lock()
+			if ad.lastStates == nil {
+				ad.lastStates = make(map[SlotKey]AbilityState)
+			}
+			ad.lastStates[key] = state
+			ad.trackingMu.Unlock()
+		}
+	}
+
+	if len(changed) > 0 && ad.OnStateChange != nil {
+		ad.OnStateChange(changed)
+	}
+}
+
+// cachedRefImages holds decoded reference images keyed by ability name to
+// avoid repeated PNG decoding on every frame.
+var (
+	refImageOnce   sync.Once
+	cachedRefImgs  map[string]image.Image
+)
+
+func loadRefImage(name string) image.Image {
+	refImageOnce.Do(func() {
+		cachedRefImgs = LoadReferenceIcons()
+	})
+	return cachedRefImgs[name]
 }
 
 // GetLastFrame returns a snapshot of the most recently processed frame.
@@ -72,6 +135,38 @@ func (ad *AbilityDetector) GetLastFrame() *image.RGBA {
 	ad.frameMu.RLock()
 	defer ad.frameMu.RUnlock()
 	return ad.lastFrame
+}
+
+// StartTracking runs Phase A identification on the most recent frame and
+// activates per-frame Phase B state detection.
+// refHashes must be pre-built via buildRefHashes.
+func (ad *AbilityDetector) StartTracking(refHashes map[string]*goimagehash.ImageHash) {
+	frame := ad.GetLastFrame()
+	if frame == nil || ad.layout == nil {
+		return
+	}
+	refs := IdentifySlots(frame, *ad.layout, refHashes)
+
+	ad.trackingMu.Lock()
+	ad.slotRefs = refs
+	ad.refHashes = refHashes
+	ad.lastStates = make(map[SlotKey]AbilityState)
+	ad.tracking = true
+	ad.trackingMu.Unlock()
+}
+
+// StopTracking disables per-frame state detection.
+func (ad *AbilityDetector) StopTracking() {
+	ad.trackingMu.Lock()
+	ad.tracking = false
+	ad.trackingMu.Unlock()
+}
+
+// IsTracking reports whether state detection is currently active.
+func (ad *AbilityDetector) IsTracking() bool {
+	ad.trackingMu.RLock()
+	defer ad.trackingMu.RUnlock()
+	return ad.tracking
 }
 
 func detectGrid(img *image.RGBA, hint *image.Point) SlotLayout {

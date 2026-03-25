@@ -1,6 +1,6 @@
 import {useState, useEffect} from 'react'
 import {Events} from '@wailsio/runtime'
-import {StartSnipping, AdjustGridLayout, ExportIcons} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
+import {StartSnipping, AdjustGridLayout, ExportIcons, StartTracking, StopTracking} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
 
 interface SnipRegion {
     x: number
@@ -61,6 +61,8 @@ export default function ConfigApp() {
     const [snipping, setSnipping] = useState(false)
     const [exportStatus, setExportStatus] = useState<string | null>(null)
     const [exporting, setExporting] = useState(false)
+    const [tracking, setTracking] = useState(false)
+    const [trackingStatus, setTrackingStatus] = useState<string | null>(null)
 
     useEffect(() => {
         const offConfirmed = Events.On('snipping:confirmed', (ev: any) => {
@@ -79,6 +81,22 @@ export default function ConfigApp() {
     function handleSetCaptureArea() {
         setSnipping(true)
         StartSnipping()
+    }
+
+    async function handleToggleTracking() {
+        if (tracking) {
+            StopTracking()
+            setTracking(false)
+            setTrackingStatus(null)
+        } else {
+            const msg = await StartTracking()
+            if (msg && msg.startsWith('Error') || msg === 'Capture not running.' || msg === 'No grid layout detected yet — set a capture area first.' || msg === 'No frame captured yet — make sure the game is visible.') {
+                setTrackingStatus(msg)
+            } else {
+                setTracking(true)
+                setTrackingStatus(msg)
+            }
+        }
     }
 
     async function handleExportIcons() {
@@ -126,6 +144,22 @@ export default function ConfigApp() {
             {exportStatus && (
                 <p style={{fontSize: 13, color: exportStatus.startsWith('Error') ? '#f88' : '#8f8', marginTop: 8}}>
                     {exportStatus}
+                </p>
+            )}
+
+            <hr style={{borderColor: '#333', margin: '24px 0'}}/>
+
+            <h3 style={{marginTop: 0, marginBottom: 12}}>Tracking</h3>
+            <button
+                onClick={handleToggleTracking}
+                style={{padding: '8px 16px', cursor: 'pointer',
+                    background: tracking ? '#c0392b' : undefined}}
+            >
+                {tracking ? 'Stop Tracking' : 'Start Tracking'}
+            </button>
+            {trackingStatus && (
+                <p style={{fontSize: 13, color: trackingStatus.startsWith('Tracking') ? '#8f8' : '#f88', marginTop: 8}}>
+                    {trackingStatus}
                 </p>
             )}
 
