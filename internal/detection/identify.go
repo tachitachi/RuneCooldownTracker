@@ -47,10 +47,13 @@ func BuildRefHashes(refs map[string]image.Image) map[string]*goimagehash.ImageHa
 	out := make(map[string]*goimagehash.ImageHash, len(refs))
 	for name, img := range refs {
 		h, err := hashImage(img)
-		if err == nil {
-			out[name] = h
+		if err != nil {
+			fmt.Printf("[identify] BuildRefHashes: hash error for %q: %v\n", name, err)
+			continue
 		}
+		out[name] = h
 	}
+	fmt.Printf("[identify] BuildRefHashes: %d/%d icons hashed successfully\n", len(out), len(refs))
 	return out
 }
 
@@ -80,6 +83,8 @@ func IdentifySlots(frame image.Image, layout SlotLayout, refHashes map[string]*g
 	b := frame.Bounds()
 	numCols := layout.NumCols(b.Dx())
 	numRows := layout.NumRows(b.Dy())
+	fmt.Printf("[identify] frame=%dx%d numCols=%d numRows=%d refHashes=%d\n",
+		b.Dx(), b.Dy(), numCols, numRows, len(refHashes))
 
 	result := make(map[SlotKey]slotReference, numCols*numRows)
 	var mu sync.Mutex
@@ -111,8 +116,13 @@ func IdentifySlots(frame image.Image, layout SlotLayout, refHashes map[string]*g
 
 // identifySlot finds the best-matching reference for a single slot image.
 func identifySlot(slot image.Image, refHashes map[string]*goimagehash.ImageHash) slotReference {
+	if len(refHashes) == 0 {
+		fmt.Println("[identify] refHashes is empty — no reference icons loaded")
+		return slotReference{name: "unknown"}
+	}
 	h, err := hashImage(slot)
-	if err != nil || len(refHashes) == 0 {
+	if err != nil {
+		fmt.Printf("[identify] hashImage error: %v (slot bounds: %v)\n", err, slot.Bounds())
 		return slotReference{name: "unknown"}
 	}
 
