@@ -1,6 +1,6 @@
 import {useState, useEffect} from 'react'
 import {Events} from '@wailsio/runtime'
-import {StartSnipping, AdjustGridLayout} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
+import {StartSnipping, AdjustGridLayout, ExportIcons} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
 
 interface SnipRegion {
     x: number
@@ -59,6 +59,8 @@ function DPad({label, onLeft, onRight, onUp, onDown, leftTitle, rightTitle, upTi
 export default function ConfigApp() {
     const [region, setRegion] = useState<SnipRegion | null>(null)
     const [snipping, setSnipping] = useState(false)
+    const [exportStatus, setExportStatus] = useState<string | null>(null)
+    const [exporting, setExporting] = useState(false)
 
     useEffect(() => {
         const offConfirmed = Events.On('snipping:confirmed', (ev: any) => {
@@ -77,6 +79,14 @@ export default function ConfigApp() {
     function handleSetCaptureArea() {
         setSnipping(true)
         StartSnipping()
+    }
+
+    async function handleExportIcons() {
+        setExporting(true)
+        setExportStatus(null)
+        const msg = await ExportIcons()
+        setExporting(false)
+        if (msg) setExportStatus(msg)
     }
 
     return (
@@ -100,6 +110,22 @@ export default function ConfigApp() {
                 <p style={{fontSize: 13, color: '#aaa'}}>
                     Switch to the game window, click the top-left ability, then the bottom-right ability.
                     Press Escape to cancel.
+                </p>
+            )}
+
+            <hr style={{borderColor: '#333', margin: '24px 0'}}/>
+
+            <h3 style={{marginTop: 0, marginBottom: 12}}>Export</h3>
+            <button
+                onClick={handleExportIcons}
+                disabled={exporting}
+                style={{padding: '8px 16px', cursor: exporting ? 'default' : 'pointer'}}
+            >
+                {exporting ? 'Exporting...' : 'Export Icons'}
+            </button>
+            {exportStatus && (
+                <p style={{fontSize: 13, color: exportStatus.startsWith('Error') ? '#f88' : '#8f8', marginTop: 8}}>
+                    {exportStatus}
                 </p>
             )}
 

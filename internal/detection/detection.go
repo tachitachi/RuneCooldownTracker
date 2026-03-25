@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"sync"
 )
 
 // SlotLayout describes the detected grid in physical pixels relative to the crop region.
@@ -40,9 +41,19 @@ type AbilityDetector struct {
 	// from being skipped when its border is absent or weak.
 	ClickHint        *image.Point
 	OnLayoutDetected func(layout SlotLayout)
+
+	frameMu   sync.RWMutex
+	lastFrame *image.RGBA
 }
 
 func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
+	// Store a deep copy of the frame for on-demand export.
+	ad.frameMu.Lock()
+	copied := image.NewRGBA(img.Bounds())
+	copy(copied.Pix, img.Pix)
+	ad.lastFrame = copied
+	ad.frameMu.Unlock()
+
 	// Re-detect whenever the first frame arrives or the crop size changes.
 	if ad.layout == nil || img.Rect != ad.lastRect {
 		layout := detectGrid(img, ad.ClickHint)
@@ -54,6 +65,13 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 		}
 	}
 	// TODO: per-slot cooldown detection using ad.layout
+}
+
+// GetLastFrame returns a snapshot of the most recently processed frame.
+func (ad *AbilityDetector) GetLastFrame() *image.RGBA {
+	ad.frameMu.RLock()
+	defer ad.frameMu.RUnlock()
+	return ad.lastFrame
 }
 
 func detectGrid(img *image.RGBA, hint *image.Point) SlotLayout {

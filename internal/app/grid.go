@@ -1,7 +1,12 @@
 package app
 
 import (
+	"fmt"
+	"image"
+	"image/png"
 	"math"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 
 	"github.com/tachitachi/RuneCooldownTracker/internal/detection"
@@ -53,4 +58,64 @@ func (a *App) AdjustGridLayout(colPhaseDelta, colPeriodDelta, rowPhaseDelta, row
 	layout.RowPeriod += rowPeriodDelta
 	a.currentLayout = &layout
 	a.emitGridLines(layout)
+}
+
+// ExportIcons opens a folder-picker dialog, then saves each grid slot from the
+// most recent captured frame as icon_{col}_{row}.png in the chosen directory.
+// Returns a status message suitable for displaying to the user.
+func (a *App) ExportIcons() string {
+	if a.currentLayout == nil {
+		return "No grid layout detected yet — set a capture area first."
+	}
+	if a.detector == nil {
+		return "Capture not running."
+	}
+	frame := a.detector.GetLastFrame()
+	if frame == nil {
+		return "No frame captured yet — make sure the game is visible."
+	}
+
+	dir, err := a.app.Dialog.OpenFile().
+		CanChooseDirectories(true).
+		CanChooseFiles(false).
+		CanCreateDirectories(true).
+		SetTitle("Select folder to save icons").
+		PromptForSingleSelection()
+	if err != nil || dir == "" {
+		return "" // cancelled
+	}
+
+	layout := *a.currentLayout
+	bounds := frame.Bounds()
+
+	numCols := (bounds.Dx() - layout.ColPhase) / layout.ColPeriod
+	numRows := (bounds.Dy() - layout.RowPhase) / layout.RowPeriod
+
+	saved := 0
+	for row := 0; row < numRows; row++ {
+		for col := 0; col < numCols; col++ {
+			x0 := bounds.Min.X + layout.ColPhase + col*layout.ColPeriod
+			y0 := bounds.Min.Y + layout.RowPhase + row*layout.RowPeriod
+			x1 := x0 + layout.ColPeriod
+			y1 := y0 + layout.RowPeriod
+			if x1 > bounds.Max.X || y1 > bounds.Max.Y {
+				continue
+			}
+
+			slot := frame.SubImage(image.Rect(x0, y0, x1, y1))
+			path := filepath.Join(dir, fmt.Sprintf("icon_%d_%d.png", col, row))
+			f, err := os.Create(path)
+			if err != nil {
+				return fmt.Sprintf("Error saving %s: %v", path, err)
+			}
+			if err := png.Encode(f, slot); err != nil {
+				f.Close()
+				return fmt.Sprintf("Error encoding %s: %v", path, err)
+			}
+			f.Close()
+			saved++
+		}
+	}
+
+	return fmt.Sprintf("Saved %d icons to %s", saved, dir)
 }
