@@ -4,7 +4,7 @@ import (
 	"embed"
 	"image"
 	"image/png"
-	"path/filepath"
+	"path"
 	"strings"
 )
 
@@ -23,7 +23,7 @@ func LoadReferenceIcons() map[string]image.Image {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".png") {
 			continue
 		}
-		f, err := iconFS.Open(filepath.Join("icons", e.Name()))
+		f, err := iconFS.Open(path.Join("icons", e.Name()))
 		if err != nil {
 			continue
 		}
