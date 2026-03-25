@@ -92,15 +92,18 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
 		refImg := loadRefImage(ref.name)
 		if refImg == nil {
+			fmt.Printf("[state] col=%d row=%d %q: ref image not found\n", key.Col, key.Row, ref.name)
 			continue
 		}
-		state := detectSlotState(slot, refImg)
+		state, mae, brightness := detectSlotState(slot, refImg)
 
 		ad.trackingMu.RLock()
 		prev, hasPrev := ad.lastStates[key]
 		ad.trackingMu.RUnlock()
 
 		if !hasPrev || prev != state {
+			fmt.Printf("[state] col=%d row=%d %q: %s → %s (mae=%.4f brightness=%.3f)\n",
+				key.Col, key.Row, ref.name, stateName(prev), stateName(state), mae, brightness)
 			changed[key] = state
 			ad.trackingMu.Lock()
 			if ad.lastStates == nil {
@@ -143,8 +146,11 @@ func (ad *AbilityDetector) GetLastFrame() *image.RGBA {
 func (ad *AbilityDetector) StartTracking(refHashes map[string]*goimagehash.ImageHash) {
 	frame := ad.GetLastFrame()
 	if frame == nil || ad.layout == nil {
+		fmt.Println("[tracking] StartTracking: no frame or layout yet")
 		return
 	}
+	fmt.Printf("[tracking] identifying slots (layout: colPeriod=%d colPhase=%d rowPeriod=%d rowPhase=%d)\n",
+		ad.layout.ColPeriod, ad.layout.ColPhase, ad.layout.RowPeriod, ad.layout.RowPhase)
 	refs := IdentifySlots(frame, *ad.layout, refHashes)
 
 	ad.trackingMu.Lock()
@@ -153,6 +159,15 @@ func (ad *AbilityDetector) StartTracking(refHashes map[string]*goimagehash.Image
 	ad.lastStates = make(map[SlotKey]AbilityState)
 	ad.tracking = true
 	ad.trackingMu.Unlock()
+	fmt.Printf("[tracking] started — tracking %d identified slots\n", func() int {
+		n := 0
+		for _, r := range refs {
+			if r.name != "unknown" {
+				n++
+			}
+		}
+		return n
+	}())
 }
 
 // StopTracking disables per-frame state detection.
@@ -160,6 +175,7 @@ func (ad *AbilityDetector) StopTracking() {
 	ad.trackingMu.Lock()
 	ad.tracking = false
 	ad.trackingMu.Unlock()
+	fmt.Println("[tracking] stopped")
 }
 
 // IsTracking reports whether state detection is currently active.

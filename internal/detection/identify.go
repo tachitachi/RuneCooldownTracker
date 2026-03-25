@@ -1,6 +1,7 @@
 package detection
 
 import (
+	"fmt"
 	"image"
 	"image/draw"
 	"math"
@@ -98,6 +99,13 @@ func IdentifySlots(frame image.Image, layout SlotLayout, refHashes map[string]*g
 		}
 	}
 	wg.Wait()
+	identified := 0
+	for _, ref := range result {
+		if ref.name != "unknown" {
+			identified++
+		}
+	}
+	fmt.Printf("[identify] done: %d/%d slots identified\n", identified, len(result))
 	return result
 }
 
@@ -120,8 +128,12 @@ func identifySlot(slot image.Image, refHashes map[string]*goimagehash.ImageHash)
 			bestName = name
 		}
 	}
-	if bestDist > phashThreshold {
+	matched := bestDist <= phashThreshold
+	if !matched {
+		fmt.Printf("[identify] no match (best=%q dist=%d > threshold=%d)\n", bestName, bestDist, phashThreshold)
 		bestName = "unknown"
+	} else {
+		fmt.Printf("[identify] matched %q (dist=%d)\n", bestName, bestDist)
 	}
 	return slotReference{name: bestName, hash: h}
 }

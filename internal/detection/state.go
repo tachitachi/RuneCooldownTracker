@@ -18,6 +18,20 @@ const (
 // SlotStateMap maps grid positions to their current detected state.
 type SlotStateMap map[SlotKey]AbilityState
 
+// stateName returns a human-readable label for an AbilityState.
+func stateName(s AbilityState) string {
+	switch s {
+	case StateReady:
+		return "ready"
+	case StateCooldown:
+		return "cooldown"
+	case StateNoResources:
+		return "no_resources"
+	default:
+		return "unknown"
+	}
+}
+
 // maeMaskSize is the canonical size for MAE comparison.
 const maeMaskSize = 48
 
@@ -77,7 +91,9 @@ func buildDonutMask(size int) []bool {
 //  3. If MAE < maeThresholdReady → StateReady.
 //  4. Otherwise sample centre brightness: bright → StateCooldown (spinning
 //     timer overlay is present), dim → StateNoResources.
-func detectSlotState(slot, ref image.Image) AbilityState {
+// detectSlotState returns the current state together with the MAE and centre
+// brightness values so callers can log them for debugging.
+func detectSlotState(slot, ref image.Image) (state AbilityState, mae, brightness float64) {
 	const maeThresholdReady = 0.08
 	const brightnessThresholdCooldown = 180.0 / 255.0
 
@@ -102,11 +118,11 @@ func detectSlotState(slot, ref image.Image) AbilityState {
 		count++
 	}
 	if count == 0 {
-		return StateUnknown
+		return StateUnknown, 0, 0
 	}
-	mae := sumErr / float64(count)
+	mae = sumErr / float64(count)
 	if mae < maeThresholdReady {
-		return StateReady
+		return StateReady, mae, 0
 	}
 
 	// Distinguish cooldown vs no-resources by centre brightness.
@@ -121,9 +137,9 @@ func detectSlotState(slot, ref image.Image) AbilityState {
 			samples++
 		}
 	}
-	avgBrightness := brightnessSum / float64(samples)
-	if avgBrightness > brightnessThresholdCooldown {
-		return StateCooldown
+	brightness = brightnessSum / float64(samples)
+	if brightness > brightnessThresholdCooldown {
+		return StateCooldown, mae, brightness
 	}
-	return StateNoResources
+	return StateNoResources, mae, brightness
 }
