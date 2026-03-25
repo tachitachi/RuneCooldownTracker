@@ -57,18 +57,28 @@ func BuildRefHashes(refs map[string]image.Image) map[string]*goimagehash.ImageHa
 	return out
 }
 
-// cropSlot extracts the image region for a single slot from a full frame.
+// slotBorderPx is how many physical pixels to inset on each side of a raw
+// slot crop before hashing/comparing. The RS ability bar has a visible border
+// frame around each slot; stripping it gives a square icon region that better
+// matches the reference icon artwork.
+const slotBorderPx = 3
+
+// cropSlot extracts the image region for a single slot from a full frame,
+// inset by slotBorderPx to remove the slot border.
 func cropSlot(frame image.Image, layout SlotLayout, col, row int) image.Image {
 	b := frame.Bounds()
-	x0 := b.Min.X + layout.ColPhase + col*layout.ColPeriod
-	y0 := b.Min.Y + layout.RowPhase + row*layout.RowPeriod
-	x1 := x0 + layout.ColPeriod
-	y1 := y0 + layout.RowPeriod
+	x0 := b.Min.X + layout.ColPhase + col*layout.ColPeriod + slotBorderPx
+	y0 := b.Min.Y + layout.RowPhase + row*layout.RowPeriod + slotBorderPx
+	x1 := b.Min.X + layout.ColPhase + (col+1)*layout.ColPeriod - slotBorderPx
+	y1 := b.Min.Y + layout.RowPhase + (row+1)*layout.RowPeriod - slotBorderPx
 	if x1 > b.Max.X {
 		x1 = b.Max.X
 	}
 	if y1 > b.Max.Y {
 		y1 = b.Max.Y
+	}
+	if x1 <= x0 || y1 <= y0 {
+		return image.NewRGBA(image.Rect(0, 0, 1, 1))
 	}
 	// Materialise the sub-image as a new RGBA so downstream code can read it freely.
 	sub := image.NewRGBA(image.Rect(0, 0, x1-x0, y1-y0))
@@ -96,7 +106,7 @@ func IdentifySlots(frame image.Image, layout SlotLayout, refHashes map[string]*g
 			go func(c, r int) {
 				defer wg.Done()
 				slot := cropSlot(frame, layout, c, r)
-				ref := identifySlot(slot, refHashes)
+				ref := identifySlot(slot, refHashes, c, r)
 				mu.Lock()
 				result[SlotKey{Col: c, Row: r}] = ref
 				mu.Unlock()
@@ -115,14 +125,14 @@ func IdentifySlots(frame image.Image, layout SlotLayout, refHashes map[string]*g
 }
 
 // identifySlot finds the best-matching reference for a single slot image.
-func identifySlot(slot image.Image, refHashes map[string]*goimagehash.ImageHash) slotReference {
+func identifySlot(slot image.Image, refHashes map[string]*goimagehash.ImageHash, col, row int) slotReference {
 	if len(refHashes) == 0 {
 		fmt.Println("[identify] refHashes is empty — no reference icons loaded")
 		return slotReference{name: "unknown"}
 	}
 	h, err := hashImage(slot)
 	if err != nil {
-		fmt.Printf("[identify] hashImage error: %v (slot bounds: %v)\n", err, slot.Bounds())
+		fmt.Printf("[identify] col=%d row=%d hashImage error: %v (slot bounds: %v)\n", col, row, err, slot.Bounds())
 		return slotReference{name: "unknown"}
 	}
 
@@ -140,10 +150,10 @@ func identifySlot(slot image.Image, refHashes map[string]*goimagehash.ImageHash)
 	}
 	matched := bestDist <= phashThreshold
 	if !matched {
-		fmt.Printf("[identify] no match (best=%q dist=%d > threshold=%d)\n", bestName, bestDist, phashThreshold)
+		fmt.Printf("[identify] col=%d row=%d no match (best=%q dist=%d > threshold=%d)\n", col, row, bestName, bestDist, phashThreshold)
 		bestName = "unknown"
 	} else {
-		fmt.Printf("[identify] matched %q (dist=%d)\n", bestName, bestDist)
+		fmt.Printf("[identify] col=%d row=%d matched %q (dist=%d)\n", col, row, bestName, bestDist)
 	}
 	return slotReference{name: bestName, hash: h}
 }
