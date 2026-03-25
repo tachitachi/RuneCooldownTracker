@@ -82,23 +82,25 @@ func buildDonutMask(size int) []bool {
 	return mask
 }
 
-// detectSlotState compares a live slot crop against its reference icon to
-// determine the current ability state.
+// detectSlotState compares a live slot crop against the game-pixel baseline
+// captured at tracking start to determine the current ability state.
 //
 // Algorithm:
-//  1. Resize both to maeMaskSize × maeMaskSize.
-//  2. Compute MAE over non-masked pixels (normalised to [0,1]).
+//  1. Resize slot to maeMaskSize × maeMaskSize (baseline is already that size).
+//  2. Compute MAE over non-masked pixels (excludes centre timer area and corners).
 //  3. If MAE < maeThresholdReady → StateReady.
 //  4. Otherwise sample centre brightness: bright → StateCooldown (spinning
 //     timer overlay is present), dim → StateNoResources.
-// detectSlotState returns the current state together with the MAE and centre
-// brightness values so callers can log them for debugging.
-func detectSlotState(slot, ref image.Image) (state AbilityState, mae, brightness float64) {
-	const maeThresholdReady = 0.08
+//
+// Returns (state, mae, brightness) for debug logging.
+func detectSlotState(slot image.Image, baseline *image.RGBA) (state AbilityState, mae, brightness float64) {
+	// Game-to-game comparison: threshold can be tight because there is no
+	// background colour mismatch between slot and baseline.
+	const maeThresholdReady = 0.05
 	const brightnessThresholdCooldown = 180.0 / 255.0
 
 	s := resizeTo(slot, maeMaskSize)
-	r := resizeTo(ref, maeMaskSize)
+	r := baseline
 
 	// Compute MAE over unmasked pixels.
 	var sumErr float64

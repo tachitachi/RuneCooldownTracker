@@ -46,11 +46,12 @@ type AbilityDetector struct {
 	frameMu   sync.RWMutex
 	lastFrame *image.RGBA
 
-	trackingMu sync.RWMutex
-	tracking   bool
-	slotRefs   map[SlotKey]slotReference
-	refImages  map[string]*image.RGBA
-	lastStates map[SlotKey]AbilityState
+	trackingMu    sync.RWMutex
+	tracking      bool
+	slotRefs      map[SlotKey]slotReference
+	refImages     map[string]*image.RGBA
+	slotBaselines map[SlotKey]*image.RGBA // game-pixel snapshot of each slot at tracking start
+	lastStates    map[SlotKey]AbilityState
 }
 
 func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
@@ -82,25 +83,28 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 		return
 	}
 
+	ad.trackingMu.RLock()
+	baselines := ad.slotBaselines
+	ad.trackingMu.RUnlock()
+
 	changed := SlotStateMap{}
 	for key, ref := range refs {
 		if ref.name == "unknown" {
 			continue
 		}
-		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
-		refImg := loadRefImage(ref.name)
-		if refImg == nil {
-			fmt.Printf("[state] col=%d row=%d %q: ref image not found\n", key.Col, key.Row, ref.name)
+		baseline := baselines[key]
+		if baseline == nil {
 			continue
 		}
-		state, mae, brightness := detectSlotState(slot, refImg)
+		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
+		state, mae, brightness := detectSlotState(slot, baseline)
 
 		ad.trackingMu.RLock()
 		prev, hasPrev := ad.lastStates[key]
 		ad.trackingMu.RUnlock()
 
 		if !hasPrev || prev != state {
-			fmt.Printf("[state] col=%d row=%d %q: %s → %s (mae=%.4f brightness=%.3f)\n",
+			fmt.Printf("[state] col=%d row=%d %q: %s → %s (baseline_mae=%.4f brightness=%.3f)\n",
 				key.Col, key.Row, ref.name, stateName(prev), stateName(state), mae, brightness)
 			changed[key] = state
 			ad.trackingMu.Lock()
@@ -115,20 +119,6 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	if len(changed) > 0 && ad.OnStateChange != nil {
 		ad.OnStateChange(changed)
 	}
-}
-
-// cachedRefImages holds decoded reference images keyed by ability name to
-// avoid repeated PNG decoding on every frame.
-var (
-	refImageOnce   sync.Once
-	cachedRefImgs  map[string]image.Image
-)
-
-func loadRefImage(name string) image.Image {
-	refImageOnce.Do(func() {
-		cachedRefImgs = LoadReferenceIcons()
-	})
-	return cachedRefImgs[name]
 }
 
 // GetLastFrame returns a snapshot of the most recently processed frame.
@@ -150,9 +140,21 @@ func (ad *AbilityDetector) StartTracking(refImages map[string]*image.RGBA) {
 		ad.layout.ColPeriod, ad.layout.ColPhase, ad.layout.RowPeriod, ad.layout.RowPhase)
 	refs := IdentifySlots(frame, *ad.layout, refImages)
 
+	// Capture game-pixel baselines for each identified slot.
+	// Comparing live frames against these baselines (same background, same rendering)
+	// is far more reliable than comparing against embedded reference icons.
+	baselines := make(map[SlotKey]*image.RGBA, len(refs))
+	for key, ref := range refs {
+		if ref.name != "unknown" {
+			slot := cropSlot(frame, *ad.layout, key.Col, key.Row)
+			baselines[key] = resizeTo(slot, maeMaskSize)
+		}
+	}
+
 	ad.trackingMu.Lock()
 	ad.slotRefs = refs
 	ad.refImages = refImages
+	ad.slotBaselines = baselines
 	ad.lastStates = make(map[SlotKey]AbilityState)
 	ad.tracking = true
 	ad.trackingMu.Unlock()
