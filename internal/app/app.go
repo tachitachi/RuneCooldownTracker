@@ -17,8 +17,9 @@ type App struct {
 	detector      *detection.AbilityDetector
 	overlayWindow *application.WebviewWindow
 	configWindow  *application.WebviewWindow
-	dpiScale      int64      // atomic; stores math.Float64bits of current DPI scale
-	clickInCrop   image.Point // first click relative to crop in physical pixels
+	dpiScale      int64               // atomic; stores math.Float64bits of current DPI scale
+	clickInCrop   image.Point         // first click relative to crop in physical pixels
+	currentLayout *detection.SlotLayout // last detected or manually adjusted layout
 }
 
 func NewApp() *App {
