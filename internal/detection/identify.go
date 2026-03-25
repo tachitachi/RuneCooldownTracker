@@ -24,8 +24,9 @@ const (
 	nccSize = 48
 
 	// nccThreshold is the minimum NCC score [0,1] to consider a slot matched.
-	// NCC=1 means pixel-perfect match; typical good matches score 0.85+.
-	nccThreshold = 0.70
+	// NCC=1 means pixel-perfect match; typical good matches score 0.70+,
+	// weaker but real matches score 0.55+.
+	nccThreshold = 0.55
 )
 
 // resizeTo returns img scaled to size×size using bilinear interpolation.
@@ -35,44 +36,45 @@ func resizeTo(img image.Image, size int) *image.RGBA {
 	return dst
 }
 
-// nccScore computes the normalized cross-correlation between two same-sized
-// RGBA images using luma (Y) channel only.
-// Returns a value in [-1, 1] where 1 = identical, 0 = uncorrelated.
-func nccScore(a, b *image.RGBA) float64 {
-	n := a.Bounds().Dx() * a.Bounds().Dy()
+// nccChannel computes the Pearson correlation coefficient for one channel
+// extracted from two same-length RGBA pixel slices at the given channel offset
+// (0=R, 1=G, 2=B).
+func nccChannel(aPix, bPix []uint8, ch int) float64 {
+	n := len(aPix) / 4
 	if n == 0 {
 		return 0
 	}
-
-	// Compute means.
 	var sumA, sumB float64
 	for i := 0; i < n; i++ {
-		off := i * 4
-		ra, ga, ba := float64(a.Pix[off]), float64(a.Pix[off+1]), float64(a.Pix[off+2])
-		rb, gb, bb := float64(b.Pix[off]), float64(b.Pix[off+1]), float64(b.Pix[off+2])
-		sumA += 0.299*ra + 0.587*ga + 0.114*ba
-		sumB += 0.299*rb + 0.587*gb + 0.114*bb
+		sumA += float64(aPix[i*4+ch])
+		sumB += float64(bPix[i*4+ch])
 	}
 	meanA := sumA / float64(n)
 	meanB := sumB / float64(n)
 
-	// Compute NCC numerator and denominators.
 	var num, denA, denB float64
 	for i := 0; i < n; i++ {
-		off := i * 4
-		ra, ga, ba := float64(a.Pix[off]), float64(a.Pix[off+1]), float64(a.Pix[off+2])
-		rb, gb, bb := float64(b.Pix[off]), float64(b.Pix[off+1]), float64(b.Pix[off+2])
-		ya := 0.299*ra + 0.587*ga + 0.114*ba - meanA
-		yb := 0.299*rb + 0.587*gb + 0.114*bb - meanB
-		num += ya * yb
-		denA += ya * ya
-		denB += yb * yb
+		da := float64(aPix[i*4+ch]) - meanA
+		db := float64(bPix[i*4+ch]) - meanB
+		num += da * db
+		denA += da * da
+		denB += db * db
 	}
 	den := math.Sqrt(denA * denB)
 	if den == 0 {
 		return 0
 	}
 	return num / den
+}
+
+// nccScore returns the average NCC across R, G and B channels.
+// Using all three channels is 3× more data than luma-only and is sensitive
+// to colour differences that help distinguish similarly-structured icons.
+func nccScore(a, b *image.RGBA) float64 {
+	r := nccChannel(a.Pix, b.Pix, 0)
+	g := nccChannel(a.Pix, b.Pix, 1)
+	bl := nccChannel(a.Pix, b.Pix, 2)
+	return (r + g + bl) / 3.0
 }
 
 // BuildRefImages precomputes resized reference icon images for NCC comparison.
