@@ -4,7 +4,6 @@ go 1.26.1
 
 require (
 	github.com/TKMAX777/winapi v0.0.0-20230418140346-c4565d1e9650
-	github.com/corona10/goimagehash v1.1.0
 	github.com/go-ole/go-ole v1.3.0
 	github.com/lxn/win v0.0.0-20210218163916-a377121e959e
 	github.com/pkg/errors v0.9.1
@@ -39,7 +38,6 @@ require (
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/moutend/go-wca v0.2.0 // indirect
-	github.com/nfnt/resize v0.0.0-20180221191011-83c6a9932646 // indirect
 	github.com/pjbgf/sha1cd v0.5.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/rivo/uniseg v0.4.7 // indirect

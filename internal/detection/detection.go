@@ -5,8 +5,6 @@ import (
 	"image"
 	"math"
 	"sync"
-
-	"github.com/corona10/goimagehash"
 )
 
 // SlotLayout describes the detected grid in physical pixels relative to the crop region.
@@ -51,7 +49,7 @@ type AbilityDetector struct {
 	trackingMu sync.RWMutex
 	tracking   bool
 	slotRefs   map[SlotKey]slotReference
-	refHashes  map[string]*goimagehash.ImageHash
+	refImages  map[string]*image.RGBA
 	lastStates map[SlotKey]AbilityState
 }
 
@@ -142,8 +140,7 @@ func (ad *AbilityDetector) GetLastFrame() *image.RGBA {
 
 // StartTracking runs Phase A identification on the most recent frame and
 // activates per-frame Phase B state detection.
-// refHashes must be pre-built via buildRefHashes.
-func (ad *AbilityDetector) StartTracking(refHashes map[string]*goimagehash.ImageHash) {
+func (ad *AbilityDetector) StartTracking(refImages map[string]*image.RGBA) {
 	frame := ad.GetLastFrame()
 	if frame == nil || ad.layout == nil {
 		fmt.Println("[tracking] StartTracking: no frame or layout yet")
@@ -151,11 +148,11 @@ func (ad *AbilityDetector) StartTracking(refHashes map[string]*goimagehash.Image
 	}
 	fmt.Printf("[tracking] identifying slots (layout: colPeriod=%d colPhase=%d rowPeriod=%d rowPhase=%d)\n",
 		ad.layout.ColPeriod, ad.layout.ColPhase, ad.layout.RowPeriod, ad.layout.RowPhase)
-	refs := IdentifySlots(frame, *ad.layout, refHashes)
+	refs := IdentifySlots(frame, *ad.layout, refImages)
 
 	ad.trackingMu.Lock()
 	ad.slotRefs = refs
-	ad.refHashes = refHashes
+	ad.refImages = refImages
 	ad.lastStates = make(map[SlotKey]AbilityState)
 	ad.tracking = true
 	ad.trackingMu.Unlock()
@@ -183,6 +180,13 @@ func (ad *AbilityDetector) IsTracking() bool {
 	ad.trackingMu.RLock()
 	defer ad.trackingMu.RUnlock()
 	return ad.tracking
+}
+
+// SetLayout overwrites the detector's active grid layout. Call this whenever
+// the user fine-tunes the layout via the config D-pad so that cropSlot uses
+// the correct coordinates for identification and state detection.
+func (ad *AbilityDetector) SetLayout(layout SlotLayout) {
+	ad.layout = &layout
 }
 
 func detectGrid(img *image.RGBA, hint *image.Point) SlotLayout {

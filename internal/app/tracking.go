@@ -21,12 +21,12 @@ func (a *App) StartTracking() string {
 	}
 
 	refs := detection.LoadReferenceIcons()
-	refHashes := detection.BuildRefHashes(refs)
+	refImages := detection.BuildRefImages(refs)
 
 	a.detector.OnStateChange = func(changed detection.SlotStateMap) {
 		a.emitSlotStates(changed)
 	}
-	a.detector.StartTracking(refHashes)
+	a.detector.StartTracking(refImages)
 	return "Tracking started."
 }
 

@@ -57,6 +57,9 @@ func (a *App) AdjustGridLayout(colPhaseDelta, colPeriodDelta, rowPhaseDelta, row
 	layout.RowPhase += rowPhaseDelta
 	layout.RowPeriod += rowPeriodDelta
 	a.currentLayout = &layout
+	if a.detector != nil {
+		a.detector.SetLayout(layout)
+	}
 	a.emitGridLines(layout)
 }
 

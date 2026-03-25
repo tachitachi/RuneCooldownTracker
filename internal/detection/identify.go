@@ -7,27 +7,25 @@ import (
 	"math"
 	"sync"
 
-	"github.com/corona10/goimagehash"
 	xdraw "golang.org/x/image/draw"
 )
 
 // SlotKey identifies a grid position by column and row (0-indexed).
 type SlotKey struct{ Col, Row int }
 
-// slotReference holds the identified ability for a slot and its pHash for
-// comparison.
+// slotReference holds the identified ability name for a slot.
 type slotReference struct {
 	name string
-	hash *goimagehash.ImageHash
 }
 
 const (
-	// phashSize is the canonical size we resize slots and reference icons to
-	// before computing pHash.
-	phashSize = 48
+	// nccSize is the canonical size both slot crops and reference icons are
+	// resized to before computing NCC.
+	nccSize = 48
 
-	// phashThreshold is the maximum Hamming distance considered a match.
-	phashThreshold = 15
+	// nccThreshold is the minimum NCC score [0,1] to consider a slot matched.
+	// NCC=1 means pixel-perfect match; typical good matches score 0.85+.
+	nccThreshold = 0.70
 )
 
 // resizeTo returns img scaled to size×size using bilinear interpolation.
@@ -37,30 +35,59 @@ func resizeTo(img image.Image, size int) *image.RGBA {
 	return dst
 }
 
-// hashImage computes the perceptual hash of img after resizing to phashSize.
-func hashImage(img image.Image) (*goimagehash.ImageHash, error) {
-	return goimagehash.PerceptionHash(resizeTo(img, phashSize))
+// nccScore computes the normalized cross-correlation between two same-sized
+// RGBA images using luma (Y) channel only.
+// Returns a value in [-1, 1] where 1 = identical, 0 = uncorrelated.
+func nccScore(a, b *image.RGBA) float64 {
+	n := a.Bounds().Dx() * a.Bounds().Dy()
+	if n == 0 {
+		return 0
+	}
+
+	// Compute means.
+	var sumA, sumB float64
+	for i := 0; i < n; i++ {
+		off := i * 4
+		ra, ga, ba := float64(a.Pix[off]), float64(a.Pix[off+1]), float64(a.Pix[off+2])
+		rb, gb, bb := float64(b.Pix[off]), float64(b.Pix[off+1]), float64(b.Pix[off+2])
+		sumA += 0.299*ra + 0.587*ga + 0.114*ba
+		sumB += 0.299*rb + 0.587*gb + 0.114*bb
+	}
+	meanA := sumA / float64(n)
+	meanB := sumB / float64(n)
+
+	// Compute NCC numerator and denominators.
+	var num, denA, denB float64
+	for i := 0; i < n; i++ {
+		off := i * 4
+		ra, ga, ba := float64(a.Pix[off]), float64(a.Pix[off+1]), float64(a.Pix[off+2])
+		rb, gb, bb := float64(b.Pix[off]), float64(b.Pix[off+1]), float64(b.Pix[off+2])
+		ya := 0.299*ra + 0.587*ga + 0.114*ba - meanA
+		yb := 0.299*rb + 0.587*gb + 0.114*bb - meanB
+		num += ya * yb
+		denA += ya * ya
+		denB += yb * yb
+	}
+	den := math.Sqrt(denA * denB)
+	if den == 0 {
+		return 0
+	}
+	return num / den
 }
 
-// BuildRefHashes precomputes pHashes for all reference icons.
-func BuildRefHashes(refs map[string]image.Image) map[string]*goimagehash.ImageHash {
-	out := make(map[string]*goimagehash.ImageHash, len(refs))
+// BuildRefImages precomputes resized reference icon images for NCC comparison.
+func BuildRefImages(refs map[string]image.Image) map[string]*image.RGBA {
+	out := make(map[string]*image.RGBA, len(refs))
 	for name, img := range refs {
-		h, err := hashImage(img)
-		if err != nil {
-			fmt.Printf("[identify] BuildRefHashes: hash error for %q: %v\n", name, err)
-			continue
-		}
-		out[name] = h
+		out[name] = resizeTo(img, nccSize)
 	}
-	fmt.Printf("[identify] BuildRefHashes: %d/%d icons hashed successfully\n", len(out), len(refs))
+	fmt.Printf("[identify] BuildRefImages: %d reference icons prepared\n", len(out))
 	return out
 }
 
 // slotBorderPx is how many physical pixels to inset on each side of a raw
-// slot crop before hashing/comparing. The RS ability bar has a visible border
-// frame around each slot; stripping it gives a square icon region that better
-// matches the reference icon artwork.
+// slot crop. The RS ability bar has a visible border frame around each slot;
+// stripping it gives a square icon region that better matches reference artwork.
 const slotBorderPx = 3
 
 // cropSlot extracts the image region for a single slot from a full frame,
@@ -80,21 +107,20 @@ func cropSlot(frame image.Image, layout SlotLayout, col, row int) image.Image {
 	if x1 <= x0 || y1 <= y0 {
 		return image.NewRGBA(image.Rect(0, 0, 1, 1))
 	}
-	// Materialise the sub-image as a new RGBA so downstream code can read it freely.
 	sub := image.NewRGBA(image.Rect(0, 0, x1-x0, y1-y0))
 	draw.Draw(sub, sub.Bounds(), frame, image.Point{x0, y0}, draw.Src)
 	return sub
 }
 
 // IdentifySlots runs Phase A: for every slot in the grid, finds the closest
-// reference ability by pHash Hamming distance. Returns a SlotKey→slotReference
-// map; unmatched slots get name="unknown" and hash=nil.
-func IdentifySlots(frame image.Image, layout SlotLayout, refHashes map[string]*goimagehash.ImageHash) map[SlotKey]slotReference {
+// reference ability by NCC. Returns a SlotKey→slotReference map; unmatched
+// slots get name="unknown".
+func IdentifySlots(frame image.Image, layout SlotLayout, refImages map[string]*image.RGBA) map[SlotKey]slotReference {
 	b := frame.Bounds()
 	numCols := layout.NumCols(b.Dx())
 	numRows := layout.NumRows(b.Dy())
-	fmt.Printf("[identify] frame=%dx%d numCols=%d numRows=%d refHashes=%d\n",
-		b.Dx(), b.Dy(), numCols, numRows, len(refHashes))
+	fmt.Printf("[identify] frame=%dx%d numCols=%d numRows=%d refs=%d\n",
+		b.Dx(), b.Dy(), numCols, numRows, len(refImages))
 
 	result := make(map[SlotKey]slotReference, numCols*numRows)
 	var mu sync.Mutex
@@ -106,7 +132,7 @@ func IdentifySlots(frame image.Image, layout SlotLayout, refHashes map[string]*g
 			go func(c, r int) {
 				defer wg.Done()
 				slot := cropSlot(frame, layout, c, r)
-				ref := identifySlot(slot, refHashes, c, r)
+				ref := identifySlot(slot, refImages, c, r)
 				mu.Lock()
 				result[SlotKey{Col: c, Row: r}] = ref
 				mu.Unlock()
@@ -124,36 +150,28 @@ func IdentifySlots(frame image.Image, layout SlotLayout, refHashes map[string]*g
 	return result
 }
 
-// identifySlot finds the best-matching reference for a single slot image.
-func identifySlot(slot image.Image, refHashes map[string]*goimagehash.ImageHash, col, row int) slotReference {
-	if len(refHashes) == 0 {
-		fmt.Println("[identify] refHashes is empty — no reference icons loaded")
+// identifySlot finds the best-matching reference for a single slot image using NCC.
+func identifySlot(slot image.Image, refImages map[string]*image.RGBA, col, row int) slotReference {
+	if len(refImages) == 0 {
 		return slotReference{name: "unknown"}
 	}
-	h, err := hashImage(slot)
-	if err != nil {
-		fmt.Printf("[identify] col=%d row=%d hashImage error: %v (slot bounds: %v)\n", col, row, err, slot.Bounds())
-		return slotReference{name: "unknown"}
-	}
+	slotResized := resizeTo(slot, nccSize)
 
 	bestName := "unknown"
-	bestDist := math.MaxInt32
-	for name, refHash := range refHashes {
-		d, err := h.Distance(refHash)
-		if err != nil {
-			continue
-		}
-		if d < bestDist {
-			bestDist = d
+	bestScore := math.Inf(-1)
+	for name, refImg := range refImages {
+		score := nccScore(slotResized, refImg)
+		if score > bestScore {
+			bestScore = score
 			bestName = name
 		}
 	}
-	matched := bestDist <= phashThreshold
+	matched := bestScore >= nccThreshold
 	if !matched {
-		fmt.Printf("[identify] col=%d row=%d no match (best=%q dist=%d > threshold=%d)\n", col, row, bestName, bestDist, phashThreshold)
+		fmt.Printf("[identify] col=%d row=%d no match (best=%q ncc=%.3f < %.2f)\n", col, row, bestName, bestScore, nccThreshold)
 		bestName = "unknown"
 	} else {
-		fmt.Printf("[identify] col=%d row=%d matched %q (dist=%d)\n", col, row, bestName, bestDist)
+		fmt.Printf("[identify] col=%d row=%d matched %q (ncc=%.3f)\n", col, row, bestName, bestScore)
 	}
-	return slotReference{name: bestName, hash: h}
+	return slotReference{name: bestName}
 }

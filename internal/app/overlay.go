@@ -89,8 +89,8 @@ func (a *App) captureGraphics(targetWindow string) {
 		// If tracking was active when the layout changed, re-identify slots.
 		if a.detector.IsTracking() {
 			refs := detection.LoadReferenceIcons()
-			refHashes := detection.BuildRefHashes(refs)
-			a.detector.StartTracking(refHashes)
+			refImages := detection.BuildRefImages(refs)
+			a.detector.StartTracking(refImages)
 		}
 	}
 
