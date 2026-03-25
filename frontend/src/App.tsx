@@ -129,9 +129,9 @@ export default function App() {
                 <div key={`gx${i}`} style={{
                     position: 'fixed',
                     left: x,
-                    top: 0,
+                    top: gridLines?.yLines ? Math.min(...gridLines?.yLines) : 0,
                     width: 1,
-                    height: '100vh',
+                    height: gridLines?.yLines ? Math.max(...gridLines?.yLines) - Math.min(...gridLines?.yLines) : '100vh',
                     background: '#ffff00',
                     opacity: 0.8,
                     pointerEvents: 'none',
@@ -140,9 +140,9 @@ export default function App() {
             {gridLines?.yLines.map((y, i) => (
                 <div key={`gy${i}`} style={{
                     position: 'fixed',
-                    left: 0,
+                    left: gridLines?.xLines ? Math.min(...gridLines?.xLines) : 0,
                     top: y,
-                    width: '100vw',
+                    width: gridLines?.xLines ? Math.max(...gridLines?.xLines) - Math.min(...gridLines?.xLines) : '100vw',
                     height: 1,
                     background: '#ffff00',
                     opacity: 0.8,
