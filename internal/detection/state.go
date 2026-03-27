@@ -45,7 +45,7 @@ const detectSize = 48
 // the ready appearance, not the captured game state at tracking start).
 //
 // Returns the detected state and the raw bright-pixel count for debug logging.
-func detectSlotState(slot image.Image, baseline *image.RGBA) (AbilityState, int) {
+func detectSlotState(slot image.Image, baseline *image.RGBA, p DetectionParams) (AbilityState, int) {
 	// A genuine timer digit pixel has three properties:
 	//   1. Absolutely bright  — it is white text (luma near 1.0).
 	//   2. Brighter than the reference icon at the same position — eliminates
@@ -53,10 +53,6 @@ func detectSlotState(slot image.Image, baseline *image.RGBA) (AbilityState, int)
 	//   3. Much brighter than its immediate live neighbours — the white stroke
 	//      sits on a dark cooldown overlay, producing a sharp local edge.
 	//      Smoothly-bright icon artwork fails this test even if it clears 1 & 2.
-	const timerAbsLuma = 0.75    // minimum absolute luma
-	const timerBrightDiff = 0.15 // minimum excess over baseline luma
-	const timerEdgeDiff = 0.15   // minimum excess over mean of 4 live neighbours
-	const timerMinPixels = 4     // qualifying pixels needed to confirm timer
 
 	s := resizeTo(slot, detectSize)
 	cx, cy := detectSize/2, detectSize/2
@@ -75,21 +71,21 @@ func detectSlotState(slot image.Image, baseline *image.RGBA) (AbilityState, int)
 			}
 			x, y := cx+dx, cy+dy
 			liveLum := luma(s, x, y)
-			if liveLum <= timerAbsLuma {
+			if liveLum <= p.TimerAbsLuma {
 				continue
 			}
-			if liveLum-luma(baseline, x, y) <= timerBrightDiff {
+			if liveLum-luma(baseline, x, y) <= p.TimerBrightDiff {
 				continue
 			}
 			// Edge check: pixel must be sharply brighter than its 4 neighbours.
 			neighbourMean := (luma(s, x-1, y) + luma(s, x+1, y) +
 				luma(s, x, y-1) + luma(s, x, y+1)) / 4.0
-			if liveLum-neighbourMean > timerEdgeDiff {
+			if liveLum-neighbourMean > p.TimerEdgeDiff {
 				brightCount++
 			}
 		}
 	}
-	if brightCount >= timerMinPixels {
+	if brightCount >= p.TimerMinPixels {
 		return StateCooldown, brightCount
 	}
 	return StateReady, brightCount

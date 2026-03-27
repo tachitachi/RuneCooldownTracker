@@ -31,6 +31,25 @@ func (l SlotLayout) NumRows(height int) int {
 	return (height - l.RowPhase) / l.RowPeriod
 }
 
+// DetectionParams holds the tunable hyperparameters for timer-text detection.
+// All fields are exported so they round-trip cleanly through JSON config.
+type DetectionParams struct {
+	TimerAbsLuma    float64 `json:"timerAbsLuma"`    // minimum absolute luma for a candidate pixel
+	TimerBrightDiff float64 `json:"timerBrightDiff"` // minimum excess over reference-icon luma
+	TimerEdgeDiff   float64 `json:"timerEdgeDiff"`   // minimum excess over mean of 4 live neighbours
+	TimerMinPixels  int     `json:"timerMinPixels"`  // qualifying pixels required to confirm timer
+}
+
+// DefaultDetectionParams returns the out-of-box parameter values.
+func DefaultDetectionParams() DetectionParams {
+	return DetectionParams{
+		TimerAbsLuma:    0.75,
+		TimerBrightDiff: 0.15,
+		TimerEdgeDiff:   0.15,
+		TimerMinPixels:  4,
+	}
+}
+
 // AbilityDetector detects the action bar slot grid and processes frames.
 type AbilityDetector struct {
 	layout      *SlotLayout
@@ -53,6 +72,27 @@ type AbilityDetector struct {
 	refImages     map[string]*image.RGBA
 	slotBaselines map[SlotKey]*image.RGBA // ready-state reference icon for each tracked slot
 	lastStates    map[SlotKey]AbilityState
+	params        DetectionParams
+}
+
+// GetDetectionParams returns the current detection hyperparameters.
+func (ad *AbilityDetector) GetDetectionParams() DetectionParams {
+	ad.trackingMu.RLock()
+	defer ad.trackingMu.RUnlock()
+	return ad.params
+}
+
+// SetDetectionParams replaces the detection hyperparameters. Takes effect on
+// the next processed frame — no restart required.
+func (ad *AbilityDetector) SetDetectionParams(p DetectionParams) {
+	ad.trackingMu.Lock()
+	ad.params = p
+	ad.trackingMu.Unlock()
+}
+
+// NewAbilityDetector returns a detector initialised with default parameters.
+func NewAbilityDetector() *AbilityDetector {
+	return &AbilityDetector{params: DefaultDetectionParams()}
 }
 
 func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
@@ -80,6 +120,7 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	isTracking := ad.tracking
 	refs := ad.slotRefs
 	baselines := ad.slotBaselines
+	params := ad.params
 	ad.trackingMu.RUnlock()
 
 	if !isTracking || ad.layout == nil || len(refs) == 0 {
@@ -96,7 +137,7 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 			continue
 		}
 		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
-		state, brightCount := detectSlotState(slot, baseline)
+		state, brightCount := detectSlotState(slot, baseline, params)
 
 		ad.trackingMu.RLock()
 		prev, hasPrev := ad.lastStates[key]

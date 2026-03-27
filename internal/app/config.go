@@ -12,9 +12,10 @@ import (
 )
 
 type appConfig struct {
-	CropRegion  *capture.CropRegion   `json:"cropRegion,omitempty"`
-	GridLayout  *detection.SlotLayout `json:"gridLayout,omitempty"`
-	ClickInCrop *image.Point          `json:"clickInCrop,omitempty"`
+	CropRegion      *capture.CropRegion         `json:"cropRegion,omitempty"`
+	GridLayout      *detection.SlotLayout        `json:"gridLayout,omitempty"`
+	ClickInCrop     *image.Point                 `json:"clickInCrop,omitempty"`
+	DetectionParams *detection.DetectionParams   `json:"detectionParams,omitempty"`
 }
 
 func configPath() string {
@@ -37,6 +38,10 @@ func (a *App) saveConfig() {
 	if a.clickInCrop != (image.Point{}) {
 		pt := a.clickInCrop
 		cfg.ClickInCrop = &pt
+	}
+	if a.detector != nil {
+		params := a.detector.GetDetectionParams()
+		cfg.DetectionParams = &params
 	}
 
 	path := configPath()
@@ -90,5 +95,9 @@ func (a *App) loadConfig() {
 		a.detector.SetLayoutAndBounds(*cfg.GridLayout, bounds)
 		fmt.Printf("[config] restored grid layout: %+v\n", *cfg.GridLayout)
 		a.emitGridLines(*cfg.GridLayout)
+	}
+	if cfg.DetectionParams != nil && a.detector != nil {
+		a.detector.SetDetectionParams(*cfg.DetectionParams)
+		fmt.Printf("[config] restored detection params: %+v\n", *cfg.DetectionParams)
 	}
 }

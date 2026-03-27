@@ -82,7 +82,7 @@ func (a *App) captureGraphics(targetWindow string) {
 	}
 	fmt.Printf("Found target window: %d\n", rdHwnd)
 
-	a.detector = &detection.AbilityDetector{}
+	a.detector = detection.NewAbilityDetector()
 	a.detector.OnLayoutDetected = func(layout detection.SlotLayout) {
 		a.currentLayout = &layout
 		a.emitGridLines(layout)
