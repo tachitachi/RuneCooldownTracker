@@ -5,7 +5,6 @@ import (
 	"image"
 	"math"
 	"sync"
-	"time"
 )
 
 // SlotLayout describes the detected grid in physical pixels relative to the crop region.
@@ -32,20 +31,6 @@ func (l SlotLayout) NumRows(height int) int {
 	return (height - l.RowPhase) / l.RowPeriod
 }
 
-// gcdDuration is the global cooldown window that follows any ability activation.
-// During this window, all icons receive a shadow sweep animation but only the
-// used ability has an actual cooldown timer.
-const gcdDuration = 1800 * time.Millisecond
-
-// gcdShadowThreshold is the minimum darkDelta for a slot to be considered
-// affected by the GCD shadow sweep (as opposed to just noise).
-const gcdShadowThreshold = 0.04
-
-// gcdMajorityFrac is the minimum fraction of tracked slots that must show the
-// shadow sweep simultaneously for it to be classified as a global cooldown rather
-// than individual per-ability cooldowns. 0.75 = at least 75% of tracked slots.
-const gcdMajorityFrac = 0.75
-
 // AbilityDetector detects the action bar slot grid and processes frames.
 type AbilityDetector struct {
 	layout      *SlotLayout
@@ -66,10 +51,8 @@ type AbilityDetector struct {
 	tracking      bool
 	slotRefs      map[SlotKey]slotReference
 	refImages     map[string]*image.RGBA
-	notReadyRefs  map[string]*image.RGBA // pre-resized not_ready icons, keyed by ability name
-	slotBaselines map[SlotKey]*image.RGBA // game-pixel snapshot of each slot at tracking start
+	slotBaselines map[SlotKey]*image.RGBA // ready-state reference icon for each tracked slot
 	lastStates    map[SlotKey]AbilityState
-	gcdUntil      time.Time // wall-clock deadline of the current global cooldown window
 }
 
 func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
@@ -92,35 +75,18 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 		}
 	}
 
-	// Phase B: per-frame state detection when tracking is active.
+	// Per-frame state detection when tracking is active.
 	ad.trackingMu.RLock()
 	isTracking := ad.tracking
 	refs := ad.slotRefs
+	baselines := ad.slotBaselines
 	ad.trackingMu.RUnlock()
 
 	if !isTracking || ad.layout == nil || len(refs) == 0 {
 		return
 	}
 
-	ad.trackingMu.RLock()
-	baselines := ad.slotBaselines
-	notReadyRefs := ad.notReadyRefs
-	ad.trackingMu.RUnlock()
-
-	// Pass 1: compute raw detection results for every tracked slot and count
-	// how many show the shadow-sweep dark delta.
-	type slotResult struct {
-		key          SlotKey
-		ref          slotReference
-		state        AbilityState
-		mae          float64
-		brightDelta  float64
-		darkDelta    float64
-		brightness   float64
-		timerDetected bool
-	}
-	results := make([]slotResult, 0, len(refs))
-	darkCount := 0
+	changed := SlotStateMap{}
 	for key, ref := range refs {
 		if ref.name == "unknown" {
 			continue
@@ -130,49 +96,21 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 			continue
 		}
 		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
-		state, mae, brightDelta, darkDelta, brightness, timerDetected := detectSlotState(slot, baseline, notReadyRefs[ref.name])
-		if darkDelta > gcdShadowThreshold {
-			darkCount++
-		}
-		results = append(results, slotResult{key, ref, state, mae, brightDelta, darkDelta, brightness, timerDetected})
-	}
-
-	// GCD detection: if a supermajority of tracked slots show the sweep at the same
-	// time, it is a global cooldown rather than individual per-ability cooldowns.
-	// We latch gcdUntil so that suppression continues for the full GCD window even
-	// if the sweep animation starts or ends unevenly across slots.
-	trackedCount := len(results)
-	gcdDetected := trackedCount >= 2 && float64(darkCount) >= float64(trackedCount)*gcdMajorityFrac
-	ad.trackingMu.Lock()
-	if gcdDetected {
-		ad.gcdUntil = time.Now().Add(gcdDuration)
-	}
-	inGCD := time.Now().Before(ad.gcdUntil)
-	ad.trackingMu.Unlock()
-
-	// Pass 2: apply GCD suppression and emit state changes.
-	// Timer-detected cooldowns are never suppressed — the white digits are a
-	// definitive signal that the ability is on individual cooldown.
-	changed := SlotStateMap{}
-	for _, r := range results {
-		state := r.state
-		if inGCD && !r.timerDetected {
-			state = StateReady
-		}
+		state, brightCount := detectSlotState(slot, baseline)
 
 		ad.trackingMu.RLock()
-		prev, hasPrev := ad.lastStates[r.key]
+		prev, hasPrev := ad.lastStates[key]
 		ad.trackingMu.RUnlock()
 
 		if !hasPrev || prev != state {
-			fmt.Printf("[state] col=%d row=%d %q: %s → %s (mae=%.4f bright=%.4f dark=%.4f brightness=%.3f gcd=%v timer=%v darkCount=%d/%d)\n",
-				r.key.Col, r.key.Row, r.ref.name, stateName(prev), stateName(state), r.mae, r.brightDelta, r.darkDelta, r.brightness, inGCD, r.timerDetected, darkCount, trackedCount)
-			changed[r.key] = state
+			fmt.Printf("[state] col=%d row=%d %q: %s → %s (timerPixels=%d)\n",
+				key.Col, key.Row, ref.name, stateName(prev), stateName(state), brightCount)
+			changed[key] = state
 			ad.trackingMu.Lock()
 			if ad.lastStates == nil {
 				ad.lastStates = make(map[SlotKey]AbilityState)
 			}
-			ad.lastStates[r.key] = state
+			ad.lastStates[key] = state
 			ad.trackingMu.Unlock()
 		}
 	}
@@ -190,7 +128,8 @@ func (ad *AbilityDetector) GetLastFrame() *image.RGBA {
 }
 
 // StartTracking runs Phase A identification on the most recent frame and
-// activates per-frame Phase B state detection.
+// activates per-frame Phase B state detection. Both ready and not-ready icon
+// sets are used so tracking can start even when abilities are on cooldown.
 func (ad *AbilityDetector) StartTracking(refImages map[string]*image.RGBA, notReadyRefs map[string]*image.RGBA) {
 	frame := ad.GetLastFrame()
 	if frame == nil || ad.layout == nil {
@@ -199,23 +138,24 @@ func (ad *AbilityDetector) StartTracking(refImages map[string]*image.RGBA, notRe
 	}
 	fmt.Printf("[tracking] identifying slots (layout: colPeriod=%d colPhase=%d rowPeriod=%d rowPhase=%d)\n",
 		ad.layout.ColPeriod, ad.layout.ColPhase, ad.layout.RowPeriod, ad.layout.RowPhase)
-	refs := IdentifySlots(frame, *ad.layout, refImages)
+	refs := IdentifySlots(frame, *ad.layout, refImages, notReadyRefs)
 
-	// Capture game-pixel baselines for each identified slot.
-	// Comparing live frames against these baselines (same background, same rendering)
-	// is far more reliable than comparing against embedded reference icons.
+	// Build per-slot baselines from the ready reference icons.
+	// Using the reference icon (rather than a game-pixel snapshot) means the
+	// baseline always represents the ready appearance, so tracking can start
+	// while abilities are on cooldown without poisoning the comparison.
 	baselines := make(map[SlotKey]*image.RGBA, len(refs))
 	for key, ref := range refs {
 		if ref.name != "unknown" {
-			slot := cropSlot(frame, *ad.layout, key.Col, key.Row)
-			baselines[key] = resizeTo(slot, maeMaskSize)
+			if refImg, ok := refImages[ref.name]; ok {
+				baselines[key] = refImg // already pre-resized to nccSize (= detectSize)
+			}
 		}
 	}
 
 	ad.trackingMu.Lock()
 	ad.slotRefs = refs
 	ad.refImages = refImages
-	ad.notReadyRefs = notReadyRefs
 	ad.slotBaselines = baselines
 	ad.lastStates = make(map[SlotKey]AbilityState)
 	ad.tracking = true

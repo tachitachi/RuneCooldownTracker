@@ -115,14 +115,15 @@ func cropSlot(frame image.Image, layout SlotLayout, col, row int) image.Image {
 }
 
 // IdentifySlots runs Phase A: for every slot in the grid, finds the closest
-// reference ability by NCC. Returns a SlotKey→slotReference map; unmatched
-// slots get name="unknown".
-func IdentifySlots(frame image.Image, layout SlotLayout, refImages map[string]*image.RGBA) map[SlotKey]slotReference {
+// reference ability by NCC. Both ready and not-ready icon sets are searched so
+// that tracking can start even when abilities are on cooldown.
+// Returns a SlotKey→slotReference map; unmatched slots get name="unknown".
+func IdentifySlots(frame image.Image, layout SlotLayout, readyRefs, notReadyRefs map[string]*image.RGBA) map[SlotKey]slotReference {
 	b := frame.Bounds()
 	numCols := layout.NumCols(b.Dx())
 	numRows := layout.NumRows(b.Dy())
-	fmt.Printf("[identify] frame=%dx%d numCols=%d numRows=%d refs=%d\n",
-		b.Dx(), b.Dy(), numCols, numRows, len(refImages))
+	fmt.Printf("[identify] frame=%dx%d numCols=%d numRows=%d readyRefs=%d notReadyRefs=%d\n",
+		b.Dx(), b.Dy(), numCols, numRows, len(readyRefs), len(notReadyRefs))
 
 	result := make(map[SlotKey]slotReference, numCols*numRows)
 	var mu sync.Mutex
@@ -134,7 +135,7 @@ func IdentifySlots(frame image.Image, layout SlotLayout, refImages map[string]*i
 			go func(c, r int) {
 				defer wg.Done()
 				slot := cropSlot(frame, layout, c, r)
-				ref := identifySlot(slot, refImages, c, r)
+				ref := identifySlot(slot, readyRefs, notReadyRefs, c, r)
 				mu.Lock()
 				result[SlotKey{Col: c, Row: r}] = ref
 				mu.Unlock()
@@ -152,28 +153,29 @@ func IdentifySlots(frame image.Image, layout SlotLayout, refImages map[string]*i
 	return result
 }
 
-// identifySlot finds the best-matching reference for a single slot image using NCC.
-func identifySlot(slot image.Image, refImages map[string]*image.RGBA, col, row int) slotReference {
-	if len(refImages) == 0 {
+// identifySlot finds the best-matching ability for a single slot by NCC,
+// searching both the ready and not-ready icon sets.
+func identifySlot(slot image.Image, readyRefs, notReadyRefs map[string]*image.RGBA, col, row int) slotReference {
+	if len(readyRefs) == 0 && len(notReadyRefs) == 0 {
 		return slotReference{name: "unknown"}
 	}
 	slotResized := resizeTo(slot, nccSize)
 
 	bestName := "unknown"
 	bestScore := math.Inf(-1)
-	for name, refImg := range refImages {
-		score := nccScore(slotResized, refImg)
-		if score > bestScore {
-			bestScore = score
-			bestName = name
+	for _, refs := range []map[string]*image.RGBA{readyRefs, notReadyRefs} {
+		for name, refImg := range refs {
+			score := nccScore(slotResized, refImg)
+			if score > bestScore {
+				bestScore = score
+				bestName = name
+			}
 		}
 	}
-	matched := bestScore >= nccThreshold
-	if !matched {
+	if bestScore < nccThreshold {
 		fmt.Printf("[identify] col=%d row=%d no match (best=%q ncc=%.3f < %.2f)\n", col, row, bestName, bestScore, nccThreshold)
-		bestName = "unknown"
-	} else {
-		fmt.Printf("[identify] col=%d row=%d matched %q (ncc=%.3f)\n", col, row, bestName, bestScore)
+		return slotReference{name: "unknown"}
 	}
+	fmt.Printf("[identify] col=%d row=%d matched %q (ncc=%.3f)\n", col, row, bestName, bestScore)
 	return slotReference{name: bestName}
 }
