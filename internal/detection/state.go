@@ -87,24 +87,30 @@ func buildDonutMask(size int) []bool {
 //
 // Algorithm:
 //  1. Resize slot to maeMaskSize × maeMaskSize (baseline is already that size).
-//  2. Compute MAE over non-masked pixels (excludes centre timer area and corners).
-//  3. If MAE < maeThresholdReady → StateReady.
-//  4. Otherwise sample centre brightness: bright → StateCooldown (spinning
+//  2. Compute signed MAE over non-masked pixels (excludes centre timer area and corners),
+//     decomposed into brightDelta (live brighter than baseline) and darkDelta (live darker).
+//  3. If brightDelta dominates and exceeds a threshold → white flash → StateReady.
+//  4. If total MAE < maeThresholdReady → StateReady.
+//  5. Otherwise sample centre brightness: bright → StateCooldown (spinning
 //     timer overlay is present), dim → StateNoResources.
 //
-// Returns (state, mae, brightness) for debug logging.
-func detectSlotState(slot image.Image, baseline *image.RGBA, notReadyRef *image.RGBA) (state AbilityState, mae, brightness float64) {
+// Returns (state, mae, brightDelta, darkDelta, brightness) for debug logging.
+func detectSlotState(slot image.Image, baseline *image.RGBA, notReadyRef *image.RGBA) (state AbilityState, mae, brightDelta, darkDelta, brightness float64) {
 	// Game-to-game comparison: threshold can be tight because there is no
 	// background colour mismatch between slot and baseline.
 	const maeThresholdReady = 0.05
 	const brightnessThresholdCooldown = 180.0 / 255.0
 	const nccThresholdNoResources = 0.70
+	// White flash: when an ability becomes ready (or GCD ends), the icon briefly
+	// goes much brighter than baseline. Detect this as a positive ready signal.
+	const whiteFlashThreshold = 0.15
+	const whiteFlashRatio = 2.0
 
 	s := resizeTo(slot, maeMaskSize)
 	r := baseline
 
-	// Compute MAE over unmasked pixels.
-	var sumErr float64
+	// Compute signed MAE over unmasked pixels, decomposed into bright and dark components.
+	var sumBright, sumDark float64
 	var count int
 	for i, masked := range donutMask {
 		if masked {
@@ -114,18 +120,31 @@ func detectSlotState(slot image.Image, baseline *image.RGBA, notReadyRef *image.
 		y := i / maeMaskSize
 		sr, sg, sb, _ := s.At(x, y).RGBA()
 		rr, rg, rb, _ := r.At(x, y).RGBA()
-		dr := math.Abs(float64(sr)-float64(rr)) / 65535.0
-		dg := math.Abs(float64(sg)-float64(rg)) / 65535.0
-		db := math.Abs(float64(sb)-float64(rb)) / 65535.0
-		sumErr += (dr + dg + db) / 3.0
+		// Signed per-pixel average: positive means live is brighter than baseline.
+		pixAvg := ((float64(sr)-float64(rr)) + (float64(sg)-float64(rg)) + (float64(sb)-float64(rb))) / (3.0 * 65535.0)
+		if pixAvg > 0 {
+			sumBright += pixAvg
+		} else {
+			sumDark += -pixAvg
+		}
 		count++
 	}
 	if count == 0 {
-		return StateUnknown, 0, 0
+		return StateUnknown, 0, 0, 0, 0
 	}
-	mae = sumErr / float64(count)
+	brightDelta = sumBright / float64(count)
+	darkDelta = sumDark / float64(count)
+	mae = brightDelta + darkDelta // identical total to the old |diff| / count
+
+	// White flash: icon is significantly brighter than baseline with only minor
+	// dark regions. This occurs when an ability transitions to ready (individual
+	// cooldown expiry or GCD end flash). Treat as ready even though MAE is elevated.
+	if brightDelta > whiteFlashThreshold && brightDelta > darkDelta*whiteFlashRatio {
+		return StateReady, mae, brightDelta, darkDelta, 0
+	}
+
 	if mae < maeThresholdReady {
-		return StateReady, mae, 0
+		return StateReady, mae, brightDelta, darkDelta, 0
 	}
 
 	// Distinguish cooldown vs no-resources.
@@ -135,9 +154,9 @@ func detectSlotState(slot image.Image, baseline *image.RGBA, notReadyRef *image.
 		// Low NCC → a spinning timer overlay is present → cooldown.
 		score := nccScore(s, notReadyRef)
 		if score >= nccThresholdNoResources {
-			return StateNoResources, mae, 0
+			return StateNoResources, mae, brightDelta, darkDelta, 0
 		}
-		return StateCooldown, mae, 0
+		return StateCooldown, mae, brightDelta, darkDelta, 0
 	}
 
 	// Fallback: centre brightness heuristic (no not_ready icon for this ability).
@@ -154,7 +173,7 @@ func detectSlotState(slot image.Image, baseline *image.RGBA, notReadyRef *image.
 	}
 	brightness = brightnessSum / float64(samples)
 	if brightness > brightnessThresholdCooldown {
-		return StateCooldown, mae, brightness
+		return StateCooldown, mae, brightDelta, darkDelta, brightness
 	}
-	return StateNoResources, mae, brightness
+	return StateNoResources, mae, brightDelta, darkDelta, brightness
 }
