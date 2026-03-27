@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/base64"
 	"math"
 	"sync/atomic"
 
@@ -54,6 +55,57 @@ func (a *App) StopTracking() {
 	if a.detector != nil {
 		a.detector.StopTracking()
 	}
+}
+
+// GetAbilityIcon returns the ready-state PNG icon for the named ability as a
+// base64-encoded string, suitable for use as a data URL in the frontend.
+func (a *App) GetAbilityIcon(name string) string {
+	data := detection.ReadyIconPNG(name)
+	if data == nil {
+		return ""
+	}
+	return base64.StdEncoding.EncodeToString(data)
+}
+
+// GetTrackedAbilityNames returns the sorted list of ability names currently
+// identified in tracked slots.
+func (a *App) GetTrackedAbilityNames() []string {
+	if a.detector == nil {
+		return nil
+	}
+	return a.detector.GetTrackedAbilityNames()
+}
+
+// GetAbilityDetectionParams returns the detection parameters for a specific
+// ability. Falls back to the global params if no per-ability override exists.
+func (a *App) GetAbilityDetectionParams(name string) detection.DetectionParams {
+	if a.detector == nil {
+		return detection.DefaultDetectionParams()
+	}
+	if p, ok := a.detector.GetAbilityParams(name); ok {
+		return p
+	}
+	return a.detector.GetDetectionParams()
+}
+
+// SetAbilityDetectionParams stores a per-ability detection parameter override
+// and persists it to config.
+func (a *App) SetAbilityDetectionParams(name string, params detection.DetectionParams) {
+	if a.detector == nil {
+		return
+	}
+	a.detector.SetAbilityParams(name, params)
+	a.saveConfig()
+}
+
+// SetAllAbilityDetectionParams applies the given params to every currently
+// tracked ability and persists to config.
+func (a *App) SetAllAbilityDetectionParams(params detection.DetectionParams) {
+	if a.detector == nil {
+		return
+	}
+	a.detector.SetAllAbilityParams(params)
+	a.saveConfig()
 }
 
 // emitSlotStates converts slot positions to logical pixels and emits the
