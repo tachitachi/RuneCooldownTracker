@@ -8,13 +8,11 @@ import (
 	"strings"
 )
 
-//go:embed icons/*.png
+//go:embed icons/ready icons/not_ready
 var iconFS embed.FS
 
-// LoadReferenceIcons returns a map of ability name → decoded image for every
-// PNG in the embedded icons directory.
-func LoadReferenceIcons() map[string]image.Image {
-	entries, err := iconFS.ReadDir("icons")
+func loadIconDir(dir string) map[string]image.Image {
+	entries, err := iconFS.ReadDir(dir)
 	if err != nil {
 		return nil
 	}
@@ -23,7 +21,7 @@ func LoadReferenceIcons() map[string]image.Image {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".png") {
 			continue
 		}
-		f, err := iconFS.Open(path.Join("icons", e.Name()))
+		f, err := iconFS.Open(path.Join(dir, e.Name()))
 		if err != nil {
 			continue
 		}
@@ -37,3 +35,11 @@ func LoadReferenceIcons() map[string]image.Image {
 	}
 	return out
 }
+
+// LoadReferenceIcons returns a map of ability name → decoded image for every
+// PNG in the embedded icons/ready directory.
+func LoadReferenceIcons() map[string]image.Image { return loadIconDir("icons/ready") }
+
+// LoadNotReadyIcons returns a map of ability name → decoded image for every
+// PNG in the embedded icons/not_ready directory.
+func LoadNotReadyIcons() map[string]image.Image { return loadIconDir("icons/not_ready") }

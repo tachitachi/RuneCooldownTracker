@@ -93,11 +93,12 @@ func buildDonutMask(size int) []bool {
 //     timer overlay is present), dim → StateNoResources.
 //
 // Returns (state, mae, brightness) for debug logging.
-func detectSlotState(slot image.Image, baseline *image.RGBA) (state AbilityState, mae, brightness float64) {
+func detectSlotState(slot image.Image, baseline *image.RGBA, notReadyRef *image.RGBA) (state AbilityState, mae, brightness float64) {
 	// Game-to-game comparison: threshold can be tight because there is no
 	// background colour mismatch between slot and baseline.
 	const maeThresholdReady = 0.05
 	const brightnessThresholdCooldown = 180.0 / 255.0
+	const nccThresholdNoResources = 0.70
 
 	s := resizeTo(slot, maeMaskSize)
 	r := baseline
@@ -127,7 +128,19 @@ func detectSlotState(slot image.Image, baseline *image.RGBA) (state AbilityState
 		return StateReady, mae, 0
 	}
 
-	// Distinguish cooldown vs no-resources by centre brightness.
+	// Distinguish cooldown vs no-resources.
+	if notReadyRef != nil {
+		// s is 48×48 (= nccSize), so it can be passed directly to nccScore.
+		// High NCC against the not_ready reference → looks like no-resources (no timer).
+		// Low NCC → a spinning timer overlay is present → cooldown.
+		score := nccScore(s, notReadyRef)
+		if score >= nccThresholdNoResources {
+			return StateNoResources, mae, 0
+		}
+		return StateCooldown, mae, 0
+	}
+
+	// Fallback: centre brightness heuristic (no not_ready icon for this ability).
 	cx, cy := maeMaskSize/2, maeMaskSize/2
 	var brightnessSum float64
 	samples := 0

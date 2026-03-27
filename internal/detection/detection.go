@@ -51,6 +51,7 @@ type AbilityDetector struct {
 	tracking      bool
 	slotRefs      map[SlotKey]slotReference
 	refImages     map[string]*image.RGBA
+	notReadyRefs  map[string]*image.RGBA // pre-resized not_ready icons, keyed by ability name
 	slotBaselines map[SlotKey]*image.RGBA // game-pixel snapshot of each slot at tracking start
 	lastStates    map[SlotKey]AbilityState
 }
@@ -87,6 +88,7 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 
 	ad.trackingMu.RLock()
 	baselines := ad.slotBaselines
+	notReadyRefs := ad.notReadyRefs
 	ad.trackingMu.RUnlock()
 
 	changed := SlotStateMap{}
@@ -99,7 +101,7 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 			continue
 		}
 		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
-		state, mae, brightness := detectSlotState(slot, baseline)
+		state, mae, brightness := detectSlotState(slot, baseline, notReadyRefs[ref.name])
 
 		ad.trackingMu.RLock()
 		prev, hasPrev := ad.lastStates[key]
@@ -132,7 +134,7 @@ func (ad *AbilityDetector) GetLastFrame() *image.RGBA {
 
 // StartTracking runs Phase A identification on the most recent frame and
 // activates per-frame Phase B state detection.
-func (ad *AbilityDetector) StartTracking(refImages map[string]*image.RGBA) {
+func (ad *AbilityDetector) StartTracking(refImages map[string]*image.RGBA, notReadyRefs map[string]*image.RGBA) {
 	frame := ad.GetLastFrame()
 	if frame == nil || ad.layout == nil {
 		fmt.Println("[tracking] StartTracking: no frame or layout yet")
@@ -156,6 +158,7 @@ func (ad *AbilityDetector) StartTracking(refImages map[string]*image.RGBA) {
 	ad.trackingMu.Lock()
 	ad.slotRefs = refs
 	ad.refImages = refImages
+	ad.notReadyRefs = notReadyRefs
 	ad.slotBaselines = baselines
 	ad.lastStates = make(map[SlotKey]AbilityState)
 	ad.tracking = true

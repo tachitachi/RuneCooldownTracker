@@ -91,7 +91,8 @@ func (a *App) captureGraphics(targetWindow string) {
 		if a.detector.IsTracking() {
 			refs := detection.LoadReferenceIcons()
 			refImages := detection.BuildRefImages(refs)
-			a.detector.StartTracking(refImages)
+			notReadyRefs := detection.BuildRefImages(detection.LoadNotReadyIcons())
+			a.detector.StartTracking(refImages, notReadyRefs)
 		}
 	}
 
