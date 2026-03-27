@@ -34,6 +34,9 @@ func (a *App) CreateConfigWindow(app *application.App) {
 		if a.handler != nil {
 			a.emitCropRegion()
 		}
+		if a.currentLayout != nil {
+			a.emitGridLines(*a.currentLayout)
+		}
 	})
 }
 
@@ -72,12 +75,14 @@ func (a *App) ConfirmSnip(x, y, w, h, firstClickX, firstClickY float64) {
 	}
 	if a.detector != nil {
 		a.detector.ClickHint = &a.clickInCrop
+		a.detector.UnlockLayout()
 	}
 	if a.handler != nil {
 		a.handler.SetCropRegion(region)
 	}
 	a.overlayWindow.SetIgnoreMouseEvents(true)
 	a.emitCropRegion()
+	a.saveConfig()
 }
 
 // CancelSnipping aborts the snipping flow and restores click-through.

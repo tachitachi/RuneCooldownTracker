@@ -61,6 +61,7 @@ func (a *App) AdjustGridLayout(colPhaseDelta, colPeriodDelta, rowPhaseDelta, row
 		a.detector.SetLayout(layout)
 	}
 	a.emitGridLines(layout)
+	a.saveConfig()
 }
 
 // ExportIcons opens a folder-picker dialog, then saves each grid slot from the

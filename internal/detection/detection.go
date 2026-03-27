@@ -33,8 +33,9 @@ func (l SlotLayout) NumRows(height int) int {
 
 // AbilityDetector detects the action bar slot grid and processes frames.
 type AbilityDetector struct {
-	layout    *SlotLayout
-	lastRect  image.Rectangle
+	layout      *SlotLayout
+	lastRect    image.Rectangle
+	layoutFixed bool // when true, skip auto-detection until UnlockLayout is called
 	// ClickHint is the first user click inside the top-left ability slot,
 	// in crop-relative physical pixels. When set, the phase search is constrained
 	// so the click always falls inside a valid slot, which prevents the top row
@@ -62,8 +63,9 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	ad.lastFrame = copied
 	ad.frameMu.Unlock()
 
-	// Re-detect whenever the first frame arrives or the crop size changes.
-	if ad.layout == nil || img.Rect != ad.lastRect {
+	// Re-detect whenever the first frame arrives or the crop size changes,
+	// unless a layout was explicitly set from saved config (layoutFixed).
+	if !ad.layoutFixed && (ad.layout == nil || img.Rect != ad.lastRect) {
 		layout := detectGrid(img, ad.ClickHint)
 		fmt.Printf("Got grid: %v\n", layout)
 		ad.layout = &layout
@@ -189,6 +191,21 @@ func (ad *AbilityDetector) IsTracking() bool {
 // the correct coordinates for identification and state detection.
 func (ad *AbilityDetector) SetLayout(layout SlotLayout) {
 	ad.layout = &layout
+}
+
+// SetLayoutAndBounds sets the layout and locks auto-detection, preventing
+// ProcessFrame from overwriting it with a freshly detected grid.
+// Call UnlockLayout when the user draws a new capture area.
+func (ad *AbilityDetector) SetLayoutAndBounds(layout SlotLayout, rect image.Rectangle) {
+	ad.layout = &layout
+	ad.lastRect = rect
+	ad.layoutFixed = true
+}
+
+// UnlockLayout re-enables auto-detection on the next frame. Call this when
+// the user sets a new capture area so the grid can be re-detected.
+func (ad *AbilityDetector) UnlockLayout() {
+	ad.layoutFixed = false
 }
 
 func detectGrid(img *image.RGBA, hint *image.Point) SlotLayout {

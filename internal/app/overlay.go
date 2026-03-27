@@ -86,6 +86,7 @@ func (a *App) captureGraphics(targetWindow string) {
 	a.detector.OnLayoutDetected = func(layout detection.SlotLayout) {
 		a.currentLayout = &layout
 		a.emitGridLines(layout)
+		a.saveConfig()
 		// If tracking was active when the layout changed, re-identify slots.
 		if a.detector.IsTracking() {
 			refs := detection.LoadReferenceIcons()
