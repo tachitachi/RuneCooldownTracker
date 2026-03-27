@@ -110,13 +110,14 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	// Pass 1: compute raw detection results for every tracked slot and count
 	// how many show the shadow-sweep dark delta.
 	type slotResult struct {
-		key        SlotKey
-		ref        slotReference
-		state      AbilityState
-		mae        float64
-		brightDelta float64
-		darkDelta  float64
-		brightness float64
+		key          SlotKey
+		ref          slotReference
+		state        AbilityState
+		mae          float64
+		brightDelta  float64
+		darkDelta    float64
+		brightness   float64
+		timerDetected bool
 	}
 	results := make([]slotResult, 0, len(refs))
 	darkCount := 0
@@ -129,11 +130,11 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 			continue
 		}
 		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
-		state, mae, brightDelta, darkDelta, brightness := detectSlotState(slot, baseline, notReadyRefs[ref.name])
+		state, mae, brightDelta, darkDelta, brightness, timerDetected := detectSlotState(slot, baseline, notReadyRefs[ref.name])
 		if darkDelta > gcdShadowThreshold {
 			darkCount++
 		}
-		results = append(results, slotResult{key, ref, state, mae, brightDelta, darkDelta, brightness})
+		results = append(results, slotResult{key, ref, state, mae, brightDelta, darkDelta, brightness, timerDetected})
 	}
 
 	// GCD detection: if a supermajority of tracked slots show the sweep at the same
@@ -150,11 +151,12 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	ad.trackingMu.Unlock()
 
 	// Pass 2: apply GCD suppression and emit state changes.
+	// Timer-detected cooldowns are never suppressed — the white digits are a
+	// definitive signal that the ability is on individual cooldown.
 	changed := SlotStateMap{}
 	for _, r := range results {
 		state := r.state
-		// During GCD every ability shows the sweep; suppress false not-ready reads.
-		if inGCD && state == StateCooldown {
+		if inGCD && !r.timerDetected {
 			state = StateReady
 		}
 
@@ -163,8 +165,8 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 		ad.trackingMu.RUnlock()
 
 		if !hasPrev || prev != state {
-			fmt.Printf("[state] col=%d row=%d %q: %s → %s (mae=%.4f bright=%.4f dark=%.4f brightness=%.3f gcd=%v darkCount=%d/%d)\n",
-				r.key.Col, r.key.Row, r.ref.name, stateName(prev), stateName(state), r.mae, r.brightDelta, r.darkDelta, r.brightness, inGCD, darkCount, trackedCount)
+			fmt.Printf("[state] col=%d row=%d %q: %s → %s (mae=%.4f bright=%.4f dark=%.4f brightness=%.3f gcd=%v timer=%v darkCount=%d/%d)\n",
+				r.key.Col, r.key.Row, r.ref.name, stateName(prev), stateName(state), r.mae, r.brightDelta, r.darkDelta, r.brightness, inGCD, r.timerDetected, darkCount, trackedCount)
 			changed[r.key] = state
 			ad.trackingMu.Lock()
 			if ad.lastStates == nil {
