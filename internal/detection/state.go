@@ -46,7 +46,12 @@ const detectSize = 48
 //
 // Returns the detected state and the raw bright-pixel count for debug logging.
 func detectSlotState(slot image.Image, baseline *image.RGBA) (AbilityState, int) {
-	const timerBrightDiff = 0.25 // live must exceed baseline luma by this much
+	// A timer digit pixel must be both absolutely bright (it is white text) and
+	// significantly brighter than the reference icon at the same position.
+	// Using both guards avoids false positives from icons whose in-game rendering
+	// is slightly brighter than the reference PNG but nowhere near timer-white.
+	const timerAbsLuma = 0.75  // pixel must be at least this bright in absolute terms
+	const timerBrightDiff = 0.35 // and must also exceed baseline luma by this much
 	const timerMinPixels = 4     // minimum qualifying pixels to confirm timer presence
 
 	s := resizeTo(slot, detectSize)
@@ -64,7 +69,7 @@ func detectSlotState(slot image.Image, baseline *image.RGBA) (AbilityState, int)
 			br, bg, bb, _ := baseline.At(x, y).RGBA()
 			liveLum := (float64(lr)*0.299 + float64(lg)*0.587 + float64(lb)*0.114) / 65535.0
 			baseLum := (float64(br)*0.299 + float64(bg)*0.587 + float64(bb)*0.114) / 65535.0
-			if liveLum-baseLum > timerBrightDiff {
+			if liveLum > timerAbsLuma && liveLum-baseLum > timerBrightDiff {
 				brightCount++
 			}
 		}
