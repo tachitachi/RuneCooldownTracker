@@ -31,6 +31,24 @@ func (a *App) StartTracking() string {
 	return "Tracking started."
 }
 
+// GetDetectionParams returns the current timer-detection hyperparameters.
+func (a *App) GetDetectionParams() detection.DetectionParams {
+	if a.detector == nil {
+		return detection.DefaultDetectionParams()
+	}
+	return a.detector.GetDetectionParams()
+}
+
+// SetDetectionParams updates the timer-detection hyperparameters live (no
+// restart required) and persists them to config.json.
+func (a *App) SetDetectionParams(params detection.DetectionParams) {
+	if a.detector == nil {
+		return
+	}
+	a.detector.SetDetectionParams(params)
+	a.saveConfig()
+}
+
 // StopTracking stops per-frame state detection.
 func (a *App) StopTracking() {
 	if a.detector != nil {
