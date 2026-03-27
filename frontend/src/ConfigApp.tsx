@@ -1,6 +1,7 @@
 import {useState, useEffect} from 'react'
 import {Events} from '@wailsio/runtime'
-import {StartSnipping, AdjustGridLayout, ExportIcons, StartTracking, StopTracking} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
+import {StartSnipping, AdjustGridLayout, ExportIcons, StartTracking, StopTracking, GetDetectionParams, SetDetectionParams} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
+import {DetectionParams} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/detection/models'
 
 interface SnipRegion {
     x: number
@@ -63,6 +64,21 @@ export default function ConfigApp() {
     const [exporting, setExporting] = useState(false)
     const [tracking, setTracking] = useState(false)
     const [trackingStatus, setTrackingStatus] = useState<string | null>(null)
+    const [timerAbsLuma, setTimerAbsLuma] = useState('0.75')
+    const [timerBrightDiff, setTimerBrightDiff] = useState('0.15')
+    const [timerEdgeDiff, setTimerEdgeDiff] = useState('0.15')
+    const [timerMinPixels, setTimerMinPixels] = useState('4')
+    const [paramsStatus, setParamsStatus] = useState<string | null>(null)
+
+    useEffect(() => {
+        GetDetectionParams().then(p => {
+            if (!p) return
+            setTimerAbsLuma(String(p.timerAbsLuma))
+            setTimerBrightDiff(String(p.timerBrightDiff))
+            setTimerEdgeDiff(String(p.timerEdgeDiff))
+            setTimerMinPixels(String(p.timerMinPixels))
+        })
+    }, [])
 
     useEffect(() => {
         const offConfirmed = Events.On('snipping:confirmed', (ev: any) => {
@@ -97,6 +113,21 @@ export default function ConfigApp() {
                 setTrackingStatus(msg)
             }
         }
+    }
+
+    async function handleUpdateParams() {
+        const params = new DetectionParams({
+            timerAbsLuma: parseFloat(timerAbsLuma),
+            timerBrightDiff: parseFloat(timerBrightDiff),
+            timerEdgeDiff: parseFloat(timerEdgeDiff),
+            timerMinPixels: parseInt(timerMinPixels, 10),
+        })
+        if ([params.timerAbsLuma, params.timerBrightDiff, params.timerEdgeDiff, params.timerMinPixels].some(isNaN)) {
+            setParamsStatus('Invalid values — all fields must be numbers.')
+            return
+        }
+        await SetDetectionParams(params)
+        setParamsStatus('Saved.')
     }
 
     async function handleExportIcons() {
@@ -193,6 +224,35 @@ export default function ConfigApp() {
                     downTitle="Narrow row spacing (RowPeriod −1)"
                 />
             </div>
+
+            <hr style={{borderColor: '#333', margin: '24px 0'}}/>
+
+            <h3 style={{marginTop: 0, marginBottom: 12}}>Detection Parameters</h3>
+            <p style={{fontSize: 12, color: '#888', marginTop: 0, marginBottom: 16}}>
+                Tune the timer-text detection thresholds. Click Update to apply and save.
+            </p>
+            <div style={{display: 'grid', gridTemplateColumns: 'auto 120px', gap: '10px 12px', alignItems: 'center', maxWidth: 320}}>
+                <label style={{fontSize: 13}}>Timer Abs Luma</label>
+                <input type="number" step="0.01" value={timerAbsLuma} onChange={e => setTimerAbsLuma(e.target.value)}
+                    style={{padding: '4px 8px', background: '#2a2a2a', color: 'white', border: '1px solid #555', borderRadius: 4, fontSize: 13}}/>
+                <label style={{fontSize: 13}}>Timer Bright Diff</label>
+                <input type="number" step="0.01" value={timerBrightDiff} onChange={e => setTimerBrightDiff(e.target.value)}
+                    style={{padding: '4px 8px', background: '#2a2a2a', color: 'white', border: '1px solid #555', borderRadius: 4, fontSize: 13}}/>
+                <label style={{fontSize: 13}}>Timer Edge Diff</label>
+                <input type="number" step="0.01" value={timerEdgeDiff} onChange={e => setTimerEdgeDiff(e.target.value)}
+                    style={{padding: '4px 8px', background: '#2a2a2a', color: 'white', border: '1px solid #555', borderRadius: 4, fontSize: 13}}/>
+                <label style={{fontSize: 13}}>Timer Min Pixels</label>
+                <input type="number" step="1" min="1" value={timerMinPixels} onChange={e => setTimerMinPixels(e.target.value)}
+                    style={{padding: '4px 8px', background: '#2a2a2a', color: 'white', border: '1px solid #555', borderRadius: 4, fontSize: 13}}/>
+            </div>
+            <button onClick={handleUpdateParams} style={{marginTop: 14, padding: '8px 16px', cursor: 'pointer'}}>
+                Update
+            </button>
+            {paramsStatus && (
+                <p style={{fontSize: 13, color: paramsStatus.startsWith('Invalid') ? '#f88' : '#8f8', marginTop: 8}}>
+                    {paramsStatus}
+                </p>
+            )}
         </div>
     )
 }
