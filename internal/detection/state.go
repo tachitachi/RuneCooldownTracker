@@ -46,17 +46,26 @@ const detectSize = 48
 //
 // Returns the detected state and the raw bright-pixel count for debug logging.
 func detectSlotState(slot image.Image, baseline *image.RGBA) (AbilityState, int) {
-	// A timer digit pixel must be both absolutely bright (it is white text) and
-	// significantly brighter than the reference icon at the same position.
-	// Using both guards avoids false positives from icons whose in-game rendering
-	// is slightly brighter than the reference PNG but nowhere near timer-white.
-	const timerAbsLuma = 0.75  // pixel must be at least this bright in absolute terms
-	const timerBrightDiff = 0.35 // and must also exceed baseline luma by this much
-	const timerMinPixels = 4     // minimum qualifying pixels to confirm timer presence
+	// A genuine timer digit pixel has three properties:
+	//   1. Absolutely bright  — it is white text (luma near 1.0).
+	//   2. Brighter than the reference icon at the same position — eliminates
+	//      icons whose in-game rendering is slightly lighter than their PNG.
+	//   3. Much brighter than its immediate live neighbours — the white stroke
+	//      sits on a dark cooldown overlay, producing a sharp local edge.
+	//      Smoothly-bright icon artwork fails this test even if it clears 1 & 2.
+	const timerAbsLuma = 0.75    // minimum absolute luma
+	const timerBrightDiff = 0.15 // minimum excess over baseline luma
+	const timerEdgeDiff = 0.15   // minimum excess over mean of 4 live neighbours
+	const timerMinPixels = 4     // qualifying pixels needed to confirm timer
 
 	s := resizeTo(slot, detectSize)
 	cx, cy := detectSize/2, detectSize/2
 	timerRadius := float64(detectSize) / 4.0
+
+	luma := func(img *image.RGBA, x, y int) float64 {
+		r, g, b, _ := img.At(x, y).RGBA()
+		return (float64(r)*0.299 + float64(g)*0.587 + float64(b)*0.114) / 65535.0
+	}
 
 	brightCount := 0
 	for dy := -detectSize / 4; dy <= detectSize/4; dy++ {
@@ -65,11 +74,17 @@ func detectSlotState(slot image.Image, baseline *image.RGBA) (AbilityState, int)
 				continue
 			}
 			x, y := cx+dx, cy+dy
-			lr, lg, lb, _ := s.At(x, y).RGBA()
-			br, bg, bb, _ := baseline.At(x, y).RGBA()
-			liveLum := (float64(lr)*0.299 + float64(lg)*0.587 + float64(lb)*0.114) / 65535.0
-			baseLum := (float64(br)*0.299 + float64(bg)*0.587 + float64(bb)*0.114) / 65535.0
-			if liveLum > timerAbsLuma && liveLum-baseLum > timerBrightDiff {
+			liveLum := luma(s, x, y)
+			if liveLum <= timerAbsLuma {
+				continue
+			}
+			if liveLum-luma(baseline, x, y) <= timerBrightDiff {
+				continue
+			}
+			// Edge check: pixel must be sharply brighter than its 4 neighbours.
+			neighbourMean := (luma(s, x-1, y) + luma(s, x+1, y) +
+				luma(s, x, y-1) + luma(s, x, y+1)) / 4.0
+			if liveLum-neighbourMean > timerEdgeDiff {
 				brightCount++
 			}
 		}
