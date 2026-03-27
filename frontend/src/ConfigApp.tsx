@@ -1,6 +1,6 @@
 import {useState, useEffect} from 'react'
 import {Events} from '@wailsio/runtime'
-import {StartSnipping, AdjustGridLayout, ExportIcons, StartTracking, StopTracking, GetDetectionParams, SetDetectionParams} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
+import {StartSnipping, AdjustGridLayout, ExportIcons, StartTracking, StopTracking, GetDetectionParams, SetDetectionParams, GetTrackedAbilityNames, GetAbilityIcon, GetAbilityDetectionParams, SetAbilityDetectionParams, SetAllAbilityDetectionParams} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
 import {DetectionParams} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/detection/models'
 
 interface SnipRegion {
@@ -69,6 +69,9 @@ export default function ConfigApp() {
     const [timerEdgeDiff, setTimerEdgeDiff] = useState('0.15')
     const [timerMinPixels, setTimerMinPixels] = useState('4')
     const [paramsStatus, setParamsStatus] = useState<string | null>(null)
+    const [abilityNames, setAbilityNames] = useState<string[]>([])
+    const [abilityIcons, setAbilityIcons] = useState<Record<string, string>>({})
+    const [selectedAbility, setSelectedAbility] = useState<string | null>(null)
 
     useEffect(() => {
         GetDetectionParams().then(p => {
@@ -79,6 +82,23 @@ export default function ConfigApp() {
             setTimerMinPixels(String(p.timerMinPixels))
         })
     }, [])
+
+    async function loadAbilityList() {
+        const names = await GetTrackedAbilityNames()
+        if (!names || names.length === 0) {
+            setAbilityNames([])
+            setAbilityIcons({})
+            setSelectedAbility(null)
+            return
+        }
+        setAbilityNames(names)
+        const icons: Record<string, string> = {}
+        await Promise.all(names.map(async name => {
+            const b64 = await GetAbilityIcon(name)
+            if (b64) icons[name] = b64
+        }))
+        setAbilityIcons(icons)
+    }
 
     useEffect(() => {
         const offConfirmed = Events.On('snipping:confirmed', (ev: any) => {
@@ -115,7 +135,7 @@ export default function ConfigApp() {
         }
     }
 
-    async function handleUpdateParams() {
+    function buildParams() {
         const params = new DetectionParams({
             timerAbsLuma: parseFloat(timerAbsLuma),
             timerBrightDiff: parseFloat(timerBrightDiff),
@@ -124,10 +144,52 @@ export default function ConfigApp() {
         })
         if ([params.timerAbsLuma, params.timerBrightDiff, params.timerEdgeDiff, params.timerMinPixels].some(isNaN)) {
             setParamsStatus('Invalid values — all fields must be numbers.')
-            return
+            return null
         }
-        await SetDetectionParams(params)
-        setParamsStatus('Saved.')
+        return params
+    }
+
+    async function handleUpdateParams() {
+        const params = buildParams()
+        if (!params) return
+        if (selectedAbility) {
+            await SetAbilityDetectionParams(selectedAbility, params)
+            setParamsStatus(`Saved for ${selectedAbility}.`)
+        } else {
+            await SetDetectionParams(params)
+            setParamsStatus('Saved (global defaults).')
+        }
+    }
+
+    async function handleUpdateAllParams() {
+        const params = buildParams()
+        if (!params) return
+        await SetAllAbilityDetectionParams(params)
+        setParamsStatus('Saved for all tracked abilities.')
+    }
+
+    async function handleSelectAbility(name: string) {
+        if (selectedAbility === name) {
+            // deselect — load global params
+            setSelectedAbility(null)
+            const p = await GetDetectionParams()
+            if (p) {
+                setTimerAbsLuma(String(p.timerAbsLuma))
+                setTimerBrightDiff(String(p.timerBrightDiff))
+                setTimerEdgeDiff(String(p.timerEdgeDiff))
+                setTimerMinPixels(String(p.timerMinPixels))
+            }
+        } else {
+            setSelectedAbility(name)
+            const p = await GetAbilityDetectionParams(name)
+            if (p) {
+                setTimerAbsLuma(String(p.timerAbsLuma))
+                setTimerBrightDiff(String(p.timerBrightDiff))
+                setTimerEdgeDiff(String(p.timerEdgeDiff))
+                setTimerMinPixels(String(p.timerMinPixels))
+            }
+        }
+        setParamsStatus(null)
     }
 
     async function handleExportIcons() {
@@ -227,10 +289,65 @@ export default function ConfigApp() {
 
             <hr style={{borderColor: '#333', margin: '24px 0'}}/>
 
-            <h3 style={{marginTop: 0, marginBottom: 12}}>Detection Parameters</h3>
-            <p style={{fontSize: 12, color: '#888', marginTop: 0, marginBottom: 16}}>
-                Tune the timer-text detection thresholds. Click Update to apply and save.
+            <h3 style={{marginTop: 0, marginBottom: 8}}>Detection Parameters</h3>
+            <p style={{fontSize: 12, color: '#888', marginTop: 0, marginBottom: 12}}>
+                Select an ability to tune its individual thresholds, or leave none selected to edit global defaults.
             </p>
+
+            <div style={{display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10}}>
+                <button onClick={loadAbilityList} style={{padding: '5px 12px', cursor: 'pointer', fontSize: 12}}>
+                    Refresh Abilities
+                </button>
+                {selectedAbility && (
+                    <span style={{fontSize: 12, color: '#aaa'}}>Selected: <strong style={{color: 'white'}}>{selectedAbility.replace(/_/g, ' ')}</strong></span>
+                )}
+                {!selectedAbility && abilityNames.length > 0 && (
+                    <span style={{fontSize: 12, color: '#888'}}>No ability selected — editing global defaults</span>
+                )}
+            </div>
+
+            {abilityNames.length === 0 && (
+                <p style={{fontSize: 12, color: '#666', marginTop: 0, marginBottom: 12}}>
+                    No abilities tracked yet. Start tracking first, then click Refresh Abilities.
+                </p>
+            )}
+
+            {abilityNames.length > 0 && (
+                <div style={{display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16}}>
+                    {abilityNames.map(name => {
+                        const isSelected = selectedAbility === name
+                        const icon = abilityIcons[name]
+                        return (
+                            <button
+                                key={name}
+                                title={name.replace(/_/g, ' ')}
+                                onClick={() => handleSelectAbility(name)}
+                                style={{
+                                    padding: 3,
+                                    cursor: 'pointer',
+                                    background: isSelected ? '#1a4a2a' : '#2a2a2a',
+                                    border: isSelected ? '2px solid #4caf50' : '2px solid #444',
+                                    borderRadius: 6,
+                                    display: 'flex',
+                                    flexDirection: 'column',
+                                    alignItems: 'center',
+                                    gap: 3,
+                                    width: 62,
+                                }}
+                            >
+                                {icon
+                                    ? <img src={`data:image/png;base64,${icon}`} width={48} height={48} style={{imageRendering: 'pixelated', display: 'block'}}/>
+                                    : <div style={{width: 48, height: 48, background: '#333', borderRadius: 3}}/>
+                                }
+                                <span style={{fontSize: 9, color: '#aaa', lineHeight: 1.1, textAlign: 'center', wordBreak: 'break-word', maxWidth: 56}}>
+                                    {name.replace(/_/g, ' ')}
+                                </span>
+                            </button>
+                        )
+                    })}
+                </div>
+            )}
+
             <div style={{display: 'grid', gridTemplateColumns: 'auto 120px', gap: '10px 12px', alignItems: 'center', maxWidth: 320}}>
                 <label style={{fontSize: 13}}>Timer Abs Luma</label>
                 <input type="number" step="0.01" value={timerAbsLuma} onChange={e => setTimerAbsLuma(e.target.value)}
@@ -245,9 +362,14 @@ export default function ConfigApp() {
                 <input type="number" step="1" min="1" value={timerMinPixels} onChange={e => setTimerMinPixels(e.target.value)}
                     style={{padding: '4px 8px', background: '#2a2a2a', color: 'white', border: '1px solid #555', borderRadius: 4, fontSize: 13}}/>
             </div>
-            <button onClick={handleUpdateParams} style={{marginTop: 14, padding: '8px 16px', cursor: 'pointer'}}>
-                Update
-            </button>
+            <div style={{display: 'flex', gap: 8, marginTop: 14}}>
+                <button onClick={handleUpdateParams} style={{padding: '8px 16px', cursor: 'pointer'}}>
+                    {selectedAbility ? `Update ${selectedAbility.replace(/_/g, ' ')}` : 'Update Global'}
+                </button>
+                <button onClick={handleUpdateAllParams} style={{padding: '8px 16px', cursor: 'pointer'}}>
+                    Update All
+                </button>
+            </div>
             {paramsStatus && (
                 <p style={{fontSize: 13, color: paramsStatus.startsWith('Invalid') ? '#f88' : '#8f8', marginTop: 8}}>
                     {paramsStatus}

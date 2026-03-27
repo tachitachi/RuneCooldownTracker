@@ -12,10 +12,11 @@ import (
 )
 
 type appConfig struct {
-	CropRegion      *capture.CropRegion         `json:"cropRegion,omitempty"`
-	GridLayout      *detection.SlotLayout        `json:"gridLayout,omitempty"`
-	ClickInCrop     *image.Point                 `json:"clickInCrop,omitempty"`
-	DetectionParams *detection.DetectionParams   `json:"detectionParams,omitempty"`
+	CropRegion             *capture.CropRegion                  `json:"cropRegion,omitempty"`
+	GridLayout             *detection.SlotLayout                `json:"gridLayout,omitempty"`
+	ClickInCrop            *image.Point                         `json:"clickInCrop,omitempty"`
+	DetectionParams        *detection.DetectionParams           `json:"detectionParams,omitempty"`
+	AbilityDetectionParams map[string]detection.DetectionParams `json:"abilityDetectionParams,omitempty"`
 }
 
 func configPath() string {
@@ -42,6 +43,10 @@ func (a *App) saveConfig() {
 	if a.detector != nil {
 		params := a.detector.GetDetectionParams()
 		cfg.DetectionParams = &params
+		ap := a.detector.GetAllAbilityParams()
+		if len(ap) > 0 {
+			cfg.AbilityDetectionParams = ap
+		}
 	}
 
 	path := configPath()
@@ -99,5 +104,9 @@ func (a *App) loadConfig() {
 	if cfg.DetectionParams != nil && a.detector != nil {
 		a.detector.SetDetectionParams(*cfg.DetectionParams)
 		fmt.Printf("[config] restored detection params: %+v\n", *cfg.DetectionParams)
+	}
+	if cfg.AbilityDetectionParams != nil && a.detector != nil {
+		a.detector.SetAbilityParamsMap(cfg.AbilityDetectionParams)
+		fmt.Printf("[config] restored per-ability detection params for %d abilities\n", len(cfg.AbilityDetectionParams))
 	}
 }

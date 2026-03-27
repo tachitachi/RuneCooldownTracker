@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"image"
 	"math"
+	"sort"
 	"sync"
 )
 
@@ -45,8 +46,8 @@ func DefaultDetectionParams() DetectionParams {
 	return DetectionParams{
 		TimerAbsLuma:    0.75,
 		TimerBrightDiff: 0.15,
-		TimerEdgeDiff:   0.15,
-		TimerMinPixels:  4,
+		TimerEdgeDiff:   0.10,
+		TimerMinPixels:  10,
 	}
 }
 
@@ -73,6 +74,7 @@ type AbilityDetector struct {
 	slotBaselines map[SlotKey]*image.RGBA // ready-state reference icon for each tracked slot
 	lastStates    map[SlotKey]AbilityState
 	params        DetectionParams
+	abilityParams map[string]DetectionParams // per-ability overrides; nil key = use global params
 }
 
 // GetDetectionParams returns the current detection hyperparameters.
@@ -88,6 +90,81 @@ func (ad *AbilityDetector) SetDetectionParams(p DetectionParams) {
 	ad.trackingMu.Lock()
 	ad.params = p
 	ad.trackingMu.Unlock()
+}
+
+// GetAbilityParams returns the per-ability override for the named ability,
+// and whether one exists.
+func (ad *AbilityDetector) GetAbilityParams(name string) (DetectionParams, bool) {
+	ad.trackingMu.RLock()
+	defer ad.trackingMu.RUnlock()
+	p, ok := ad.abilityParams[name]
+	return p, ok
+}
+
+// SetAbilityParams stores a per-ability detection parameter override.
+func (ad *AbilityDetector) SetAbilityParams(name string, p DetectionParams) {
+	ad.trackingMu.Lock()
+	if ad.abilityParams == nil {
+		ad.abilityParams = make(map[string]DetectionParams)
+	}
+	ad.abilityParams[name] = p
+	ad.trackingMu.Unlock()
+}
+
+// SetAllAbilityParams stores the given params as an override for every
+// currently identified ability.
+func (ad *AbilityDetector) SetAllAbilityParams(p DetectionParams) {
+	ad.trackingMu.Lock()
+	if ad.abilityParams == nil {
+		ad.abilityParams = make(map[string]DetectionParams)
+	}
+	for _, ref := range ad.slotRefs {
+		if ref.name != "unknown" {
+			ad.abilityParams[ref.name] = p
+		}
+	}
+	ad.trackingMu.Unlock()
+}
+
+// GetAllAbilityParams returns a copy of the per-ability params map for persistence.
+func (ad *AbilityDetector) GetAllAbilityParams() map[string]DetectionParams {
+	ad.trackingMu.RLock()
+	defer ad.trackingMu.RUnlock()
+	out := make(map[string]DetectionParams, len(ad.abilityParams))
+	for k, v := range ad.abilityParams {
+		out[k] = v
+	}
+	return out
+}
+
+// SetAbilityParamsMap replaces the entire per-ability params map (used when
+// restoring from config).
+func (ad *AbilityDetector) SetAbilityParamsMap(m map[string]DetectionParams) {
+	ad.trackingMu.Lock()
+	ad.abilityParams = make(map[string]DetectionParams, len(m))
+	for k, v := range m {
+		ad.abilityParams[k] = v
+	}
+	ad.trackingMu.Unlock()
+}
+
+// GetTrackedAbilityNames returns a sorted list of the unique ability names
+// currently identified in tracked slots.
+func (ad *AbilityDetector) GetTrackedAbilityNames() []string {
+	ad.trackingMu.RLock()
+	defer ad.trackingMu.RUnlock()
+	seen := make(map[string]struct{})
+	for _, ref := range ad.slotRefs {
+		if ref.name != "unknown" {
+			seen[ref.name] = struct{}{}
+		}
+	}
+	names := make([]string, 0, len(seen))
+	for name := range seen {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // NewAbilityDetector returns a detector initialised with default parameters.
@@ -121,6 +198,7 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	refs := ad.slotRefs
 	baselines := ad.slotBaselines
 	params := ad.params
+	abilityParams := ad.abilityParams
 	ad.trackingMu.RUnlock()
 
 	if !isTracking || ad.layout == nil || len(refs) == 0 {
@@ -137,7 +215,11 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 			continue
 		}
 		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
-		state, brightCount := detectSlotState(slot, baseline, params)
+		slotParams := params
+		if ap, ok := abilityParams[ref.name]; ok {
+			slotParams = ap
+		}
+		state, brightCount := detectSlotState(slot, baseline, slotParams)
 
 		ad.trackingMu.RLock()
 		prev, hasPrev := ad.lastStates[key]
@@ -338,7 +420,9 @@ func smooth(proj []float64, radius int) []float64 {
 //
 // hint, when >= 0, is a position known to be inside the first slot (the first
 // user click relative to the crop). Only phases satisfying
-//   phase ≤ hint < phase + period
+//
+//	phase ≤ hint < phase + period
+//
 // are considered, which guarantees the detected grid includes a border above the
 // first slot even when that border has no visible gradient (e.g. absent top row border).
 func findPeriodAndPhase(proj []float64, minPeriod, maxPeriod, hint int) (period, phase int) {

@@ -43,3 +43,13 @@ func LoadReferenceIcons() map[string]image.Image { return loadIconDir("icons/rea
 // LoadNotReadyIcons returns a map of ability name → decoded image for every
 // PNG in the embedded icons/not_ready directory.
 func LoadNotReadyIcons() map[string]image.Image { return loadIconDir("icons/not_ready") }
+
+// ReadyIconPNG returns the raw PNG bytes for the named ability from the
+// embedded icons/ready directory, or nil if the icon does not exist.
+func ReadyIconPNG(name string) []byte {
+	data, err := iconFS.ReadFile(path.Join("icons/ready", name+".png"))
+	if err != nil {
+		return nil
+	}
+	return data
+}
