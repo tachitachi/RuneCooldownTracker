@@ -41,10 +41,10 @@ const gcdDuration = 1800 * time.Millisecond
 // affected by the GCD shadow sweep (as opposed to just noise).
 const gcdShadowThreshold = 0.04
 
-// gcdTimerBrightThreshold is the minimum peak luma in the centre region that
-// indicates a white countdown timer is present. The timer digits are bright white
-// pixels on a dark background; GCD shadow contains no such bright pixels.
-const gcdTimerBrightThreshold = 0.7
+// gcdMajorityFrac is the minimum fraction of tracked slots that must show the
+// shadow sweep simultaneously for it to be classified as a global cooldown rather
+// than individual per-ability cooldowns. 0.75 = at least 75% of tracked slots.
+const gcdMajorityFrac = 0.75
 
 // AbilityDetector detects the action bar slot grid and processes frames.
 type AbilityDetector struct {
@@ -107,7 +107,19 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 	notReadyRefs := ad.notReadyRefs
 	ad.trackingMu.RUnlock()
 
-	changed := SlotStateMap{}
+	// Pass 1: compute raw detection results for every tracked slot and count
+	// how many show the shadow-sweep dark delta.
+	type slotResult struct {
+		key        SlotKey
+		ref        slotReference
+		state      AbilityState
+		mae        float64
+		brightDelta float64
+		darkDelta  float64
+		brightness float64
+	}
+	results := make([]slotResult, 0, len(refs))
+	darkCount := 0
 	for key, ref := range refs {
 		if ref.name == "unknown" {
 			continue
@@ -118,53 +130,47 @@ func (ad *AbilityDetector) ProcessFrame(img *image.RGBA) {
 		}
 		slot := cropSlot(img, *ad.layout, key.Col, key.Row)
 		state, mae, brightDelta, darkDelta, brightness := detectSlotState(slot, baseline, notReadyRefs[ref.name])
+		if darkDelta > gcdShadowThreshold {
+			darkCount++
+		}
+		results = append(results, slotResult{key, ref, state, mae, brightDelta, darkDelta, brightness})
+	}
+
+	// GCD detection: if a supermajority of tracked slots show the sweep at the same
+	// time, it is a global cooldown rather than individual per-ability cooldowns.
+	// We latch gcdUntil so that suppression continues for the full GCD window even
+	// if the sweep animation starts or ends unevenly across slots.
+	trackedCount := len(results)
+	gcdDetected := trackedCount >= 2 && float64(darkCount) >= float64(trackedCount)*gcdMajorityFrac
+	ad.trackingMu.Lock()
+	if gcdDetected {
+		ad.gcdUntil = time.Now().Add(gcdDuration)
+	}
+	inGCD := time.Now().Before(ad.gcdUntil)
+	ad.trackingMu.Unlock()
+
+	// Pass 2: apply GCD suppression and emit state changes.
+	changed := SlotStateMap{}
+	for _, r := range results {
+		state := r.state
+		// During GCD every ability shows the sweep; suppress false not-ready reads.
+		if inGCD && state == StateCooldown {
+			state = StateReady
+		}
 
 		ad.trackingMu.RLock()
-		prev, hasPrev := ad.lastStates[key]
-		inGCD := time.Now().Before(ad.gcdUntil)
+		prev, hasPrev := ad.lastStates[r.key]
 		ad.trackingMu.RUnlock()
 
-		// When an ability transitions from ready to cooldown, start the GCD window.
-		// Other abilities will receive the shadow sweep animation during this window.
-		if hasPrev && prev == StateReady && state == StateCooldown {
-			ad.trackingMu.Lock()
-			ad.gcdUntil = time.Now().Add(gcdDuration)
-			ad.trackingMu.Unlock()
-			inGCD = true
-		}
-
-		// During GCD, a slot that looks darker than baseline but has no bright
-		// countdown timer in its centre is just receiving the shadow sweep animation —
-		// it is still ready. Suppress the false not-ready classification.
-		if inGCD && state == StateCooldown && darkDelta > gcdShadowThreshold {
-			sLive := resizeTo(slot, maeMaskSize)
-			cx, cy := maeMaskSize/2, maeMaskSize/2
-			var peakLum float64
-			for dy := -3; dy <= 3; dy++ {
-				for dx := -3; dx <= 3; dx++ {
-					lr, lg, lb, _ := sLive.At(cx+dx, cy+dy).RGBA()
-					lum := (float64(lr)*0.299 + float64(lg)*0.587 + float64(lb)*0.114) / 65535.0
-					if lum > peakLum {
-						peakLum = lum
-					}
-				}
-			}
-			// The countdown timer renders as white text — even a single bright pixel
-			// near peak luma distinguishes it from GCD shadow which has no such pixels.
-			if peakLum < gcdTimerBrightThreshold {
-				state = StateReady
-			}
-		}
-
 		if !hasPrev || prev != state {
-			fmt.Printf("[state] col=%d row=%d %q: %s → %s (mae=%.4f bright=%.4f dark=%.4f brightness=%.3f gcd=%v)\n",
-				key.Col, key.Row, ref.name, stateName(prev), stateName(state), mae, brightDelta, darkDelta, brightness, inGCD)
-			changed[key] = state
+			fmt.Printf("[state] col=%d row=%d %q: %s → %s (mae=%.4f bright=%.4f dark=%.4f brightness=%.3f gcd=%v darkCount=%d/%d)\n",
+				r.key.Col, r.key.Row, r.ref.name, stateName(prev), stateName(state), r.mae, r.brightDelta, r.darkDelta, r.brightness, inGCD, darkCount, trackedCount)
+			changed[r.key] = state
 			ad.trackingMu.Lock()
 			if ad.lastStates == nil {
 				ad.lastStates = make(map[SlotKey]AbilityState)
 			}
-			ad.lastStates[key] = state
+			ad.lastStates[r.key] = state
 			ad.trackingMu.Unlock()
 		}
 	}
