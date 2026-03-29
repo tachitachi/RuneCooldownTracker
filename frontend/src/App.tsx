@@ -53,6 +53,7 @@ export default function App() {
     const [overlayConfigs, setOverlayConfigs] = useState<Record<string, AbilityOverlayCfg>>({})
     const [placingAbility, setPlacingAbility] = useState<string | null>(null)
     const [abilityIcons, setAbilityIcons] = useState<Record<string, string>>({})
+    const [mousePos, setMousePos] = useState<{x: number; y: number} | null>(null)
 
     // Listen for snipping:start from Go
     useEffect(() => {
@@ -94,8 +95,14 @@ export default function App() {
             Events.On('overlay:configs', (ev: any) => {
                 setOverlayConfigs((ev.data as Record<string, AbilityOverlayCfg>) ?? {})
             }),
-            Events.On('tracker:place:start', (ev: any) => setPlacingAbility(ev.data?.name ?? null)),
-            Events.On('tracker:place:end', () => setPlacingAbility(null)),
+            Events.On('tracker:place:start', (ev: any) => {
+                setPlacingAbility(ev.data?.name ?? null)
+                setMousePos(null)
+            }),
+            Events.On('tracker:place:end', () => {
+                setPlacingAbility(null)
+                setMousePos(null)
+            }),
             Events.On('profile:changed', async () => {
                 const cfgs = await GetAbilityOverlayConfigs()
                 setOverlayConfigs((cfgs as Record<string, AbilityOverlayCfg>) ?? {})
@@ -139,6 +146,7 @@ export default function App() {
                 } else if (placingAbility) {
                     CancelIconPlacement()
                     setPlacingAbility(null)
+                    setMousePos(null)
                 }
             }
         }
@@ -171,9 +179,12 @@ export default function App() {
 
     const onPlacementClick = useCallback((e: React.MouseEvent) => {
         if (!placingAbility) return
-        ConfirmIconPlacement(placingAbility, e.clientX, e.clientY)
+        // Center the icon on the cursor position
+        const size = overlayConfigs[placingAbility]?.size ?? 48
+        ConfirmIconPlacement(placingAbility, e.clientX - size / 2, e.clientY - size / 2)
         setPlacingAbility(null)
-    }, [placingAbility])
+        setMousePos(null)
+    }, [placingAbility, overlayConfigs])
 
     if (snipping) {
         const instruction = firstClick
@@ -225,39 +236,6 @@ export default function App() {
         )
     }
 
-    // Icon placement mode — transparent click-capture layer
-    if (placingAbility) {
-        return (
-            <div
-                style={{
-                    position: 'fixed',
-                    inset: 0,
-                    cursor: 'crosshair',
-                    userSelect: 'none',
-                }}
-                onMouseDown={onPlacementClick}
-            >
-                <div
-                    style={{
-                        position: 'absolute',
-                        bottom: 16,
-                        left: '50%',
-                        transform: 'translateX(-50%)',
-                        color: 'white',
-                        fontSize: 13,
-                        background: 'rgba(0,0,0,0.7)',
-                        padding: '6px 14px',
-                        borderRadius: 6,
-                        pointerEvents: 'none',
-                        whiteSpace: 'nowrap',
-                    }}
-                >
-                    Click to place {placingAbility.replace(/_/g, ' ')} — Esc to cancel
-                </div>
-            </div>
-        )
-    }
-
     // The actual detection area doesn't exactly align with where we are drawing the grid
     let offsetCorrections = {
         x: 5,
@@ -303,6 +281,52 @@ export default function App() {
                     pointerEvents: 'none',
                 }}/>
             ))}
+
+            {/* Icon placement mode: transparent click-capture + preview icon following cursor */}
+            {placingAbility && (() => {
+                const size = overlayConfigs[placingAbility]?.size ?? 48
+                return (
+                    <div
+                        style={{position: 'fixed', inset: 0, cursor: 'crosshair', userSelect: 'none', zIndex: 9999}}
+                        onMouseMove={e => setMousePos({x: e.clientX, y: e.clientY})}
+                        onMouseDown={onPlacementClick}
+                    >
+                        {/* Preview icon centered on cursor */}
+                        {mousePos && (
+                            <div style={{
+                                position: 'fixed',
+                                left: mousePos.x - size / 2,
+                                top: mousePos.y - size / 2,
+                                width: size,
+                                height: size,
+                                pointerEvents: 'none',
+                                opacity: 0.75,
+                                border: '2px dashed white',
+                                borderRadius: 4,
+                                overflow: 'hidden',
+                                boxSizing: 'border-box',
+                            }}>
+                                {abilityIcons[placingAbility] && (
+                                    <img
+                                        src={`data:image/png;base64,${abilityIcons[placingAbility]}`}
+                                        width={size}
+                                        height={size}
+                                        style={{imageRendering: 'pixelated', display: 'block'}}
+                                    />
+                                )}
+                            </div>
+                        )}
+                        {/* Instruction label */}
+                        <div style={{
+                            position: 'absolute', bottom: 16, left: '50%', transform: 'translateX(-50%)',
+                            color: 'white', fontSize: 13, background: 'rgba(0,0,0,0.7)',
+                            padding: '6px 14px', borderRadius: 6, pointerEvents: 'none', whiteSpace: 'nowrap',
+                        }}>
+                            Click to place {placingAbility.replace(/_/g, ' ')} — Esc to cancel
+                        </div>
+                    </div>
+                )
+            })()}
 
             {/* Tracker icon overlays — only shown when tracking is enabled */}
             {trackingEnabled && Object.entries(overlayConfigs).map(([name, cfg]) => {

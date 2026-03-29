@@ -376,7 +376,7 @@ export default function CooldownTrackerApp() {
                                         }}
                                         onClick={e => { e.stopPropagation(); handlePlace(name) }}
                                     >
-                                        {isPlacing ? 'Placing...' : 'Place'}
+                                        {isPlacing ? 'Placing...' : hasPlacement ? 'Re-place' : 'Place'}
                                     </button>
                                     <span style={{color: '#666', fontSize: 12}}>{isExpanded ? '▲' : '▼'}</span>
                                 </div>
