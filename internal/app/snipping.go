@@ -18,8 +18,8 @@ func (a *App) CreateConfigWindow(app *application.App) {
 
 	a.configWindow = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:          "RuneCooldownTracker Config",
-		Width:          480,
-		Height:         720,
+		Width:          840,
+		Height:         1200,
 		Hidden:         false,
 		BackgroundType: application.BackgroundTypeSolid,
 		URL:            "/config.html",
