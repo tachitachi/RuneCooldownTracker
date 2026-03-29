@@ -250,23 +250,11 @@ func (ad *AbilityDetector) GetLastFrame() *image.RGBA {
 	return ad.lastFrame
 }
 
-// StartTracking runs Phase A identification on the most recent frame and
-// activates per-frame Phase B state detection. Both ready and not-ready icon
-// sets are used so tracking can start even when abilities are on cooldown.
-func (ad *AbilityDetector) StartTracking(refImages map[string]*image.RGBA, notReadyRefs map[string]*image.RGBA) {
-	frame := ad.GetLastFrame()
-	if frame == nil || ad.layout == nil {
-		fmt.Println("[tracking] StartTracking: no frame or layout yet")
-		return
-	}
-	fmt.Printf("[tracking] identifying slots (layout: colPeriod=%d colPhase=%d rowPeriod=%d rowPhase=%d)\n",
-		ad.layout.ColPeriod, ad.layout.ColPhase, ad.layout.RowPeriod, ad.layout.RowPhase)
-	refs := IdentifySlots(frame, *ad.layout, refImages, notReadyRefs)
-
-	// Build per-slot baselines from the ready reference icons.
-	// Using the reference icon (rather than a game-pixel snapshot) means the
-	// baseline always represents the ready appearance, so tracking can start
-	// while abilities are on cooldown without poisoning the comparison.
+// buildBaselines creates per-slot baseline images from slotRefs and refImages.
+// Using the reference icon (rather than a game-pixel snapshot) means the
+// baseline always represents the ready appearance, so tracking can start
+// while abilities are on cooldown without poisoning the comparison.
+func buildBaselines(refs map[SlotKey]slotReference, refImages map[string]*image.RGBA) map[SlotKey]*image.RGBA {
 	baselines := make(map[SlotKey]*image.RGBA, len(refs))
 	for key, ref := range refs {
 		if ref.name != "unknown" {
@@ -275,23 +263,117 @@ func (ad *AbilityDetector) StartTracking(refImages map[string]*image.RGBA, notRe
 			}
 		}
 	}
+	return baselines
+}
+
+// IdentifyAbilities runs Phase A identification on the most recent frame using
+// the provided icon sets. Stores the results for use by StartTracking.
+// Does NOT activate per-frame state detection — call StartTracking separately.
+func (ad *AbilityDetector) IdentifyAbilities(refImages map[string]*image.RGBA, notReadyRefs map[string]*image.RGBA) {
+	frame := ad.GetLastFrame()
+	if frame == nil || ad.layout == nil {
+		fmt.Println("[identify] IdentifyAbilities: no frame or layout yet")
+		return
+	}
+	fmt.Printf("[identify] identifying slots (layout: colPeriod=%d colPhase=%d rowPeriod=%d rowPhase=%d)\n",
+		ad.layout.ColPeriod, ad.layout.ColPhase, ad.layout.RowPeriod, ad.layout.RowPhase)
+	refs := IdentifySlots(frame, *ad.layout, refImages, notReadyRefs)
+	baselines := buildBaselines(refs, refImages)
 
 	ad.trackingMu.Lock()
 	ad.slotRefs = refs
 	ad.refImages = refImages
 	ad.slotBaselines = baselines
 	ad.lastStates = make(map[SlotKey]AbilityState)
+	ad.trackingMu.Unlock()
+}
+
+// StartTracking activates per-frame Phase B state detection using whatever
+// slot assignments are currently set (via IdentifyAbilities, ApplySlotRefs, or
+// SetSlotRef). Phase A must be run separately before calling this.
+func (ad *AbilityDetector) StartTracking() {
+	ad.trackingMu.Lock()
+	if ad.lastStates == nil {
+		ad.lastStates = make(map[SlotKey]AbilityState)
+	}
 	ad.tracking = true
 	ad.trackingMu.Unlock()
-	fmt.Printf("[tracking] started — tracking %d identified slots\n", func() int {
-		n := 0
-		for _, r := range refs {
-			if r.name != "unknown" {
-				n++
-			}
+	n := 0
+	ad.trackingMu.RLock()
+	for _, r := range ad.slotRefs {
+		if r.name != "unknown" {
+			n++
 		}
-		return n
-	}())
+	}
+	ad.trackingMu.RUnlock()
+	fmt.Printf("[tracking] started — tracking %d identified slots\n", n)
+}
+
+// GetSlotRefs returns a copy of the current slot-to-ability name mapping.
+func (ad *AbilityDetector) GetSlotRefs() map[SlotKey]string {
+	ad.trackingMu.RLock()
+	defer ad.trackingMu.RUnlock()
+	out := make(map[SlotKey]string, len(ad.slotRefs))
+	for k, v := range ad.slotRefs {
+		out[k] = v.name
+	}
+	return out
+}
+
+// SetSlotRef sets the ability assignment for a single slot and updates its
+// baseline from refImages. Pass refImages=nil to skip baseline update.
+func (ad *AbilityDetector) SetSlotRef(key SlotKey, name string, refImages map[string]*image.RGBA) {
+	ad.trackingMu.Lock()
+	defer ad.trackingMu.Unlock()
+	if ad.slotRefs == nil {
+		ad.slotRefs = make(map[SlotKey]slotReference)
+	}
+	if ad.slotBaselines == nil {
+		ad.slotBaselines = make(map[SlotKey]*image.RGBA)
+	}
+	ad.slotRefs[key] = slotReference{name: name}
+	if name != "unknown" && name != "" && refImages != nil {
+		if refImg, ok := refImages[name]; ok {
+			ad.slotBaselines[key] = refImg
+		}
+	} else {
+		delete(ad.slotBaselines, key)
+	}
+}
+
+// ClearSlotRef removes the ability assignment for a slot, its baseline, and
+// its last-known state.
+func (ad *AbilityDetector) ClearSlotRef(key SlotKey) {
+	ad.trackingMu.Lock()
+	defer ad.trackingMu.Unlock()
+	if ad.slotRefs != nil {
+		delete(ad.slotRefs, key)
+	}
+	if ad.slotBaselines != nil {
+		delete(ad.slotBaselines, key)
+	}
+	if ad.lastStates != nil {
+		delete(ad.lastStates, key)
+	}
+}
+
+// ApplySlotRefs bulk-loads slot assignments from a map (e.g. when loading a
+// profile). All existing refs, baselines and last states are replaced.
+func (ad *AbilityDetector) ApplySlotRefs(refs map[SlotKey]string, refImages map[string]*image.RGBA) {
+	newRefs := make(map[SlotKey]slotReference, len(refs))
+	for k, name := range refs {
+		newRefs[k] = slotReference{name: name}
+	}
+	baselines := buildBaselines(newRefs, refImages)
+
+	ad.trackingMu.Lock()
+	ad.slotRefs = newRefs
+	ad.slotBaselines = baselines
+	ad.lastStates = make(map[SlotKey]AbilityState)
+	if refImages != nil {
+		ad.refImages = refImages
+	}
+	ad.trackingMu.Unlock()
 }
 
 // StopTracking disables per-frame state detection.

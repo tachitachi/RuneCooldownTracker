@@ -11,12 +11,20 @@ import (
 	"github.com/tachitachi/RuneCooldownTracker/internal/detection"
 )
 
+// ProfileConfig stores the named slot-to-ability assignments for a single profile.
+type ProfileConfig struct {
+	Name     string            `json:"name"`
+	SlotRefs map[string]string `json:"slotRefs,omitempty"` // "col:row" → abilityName
+}
+
 type appConfig struct {
 	CropRegion             *capture.CropRegion                  `json:"cropRegion,omitempty"`
 	GridLayout             *detection.SlotLayout                `json:"gridLayout,omitempty"`
 	ClickInCrop            *image.Point                         `json:"clickInCrop,omitempty"`
 	DetectionParams        *detection.DetectionParams           `json:"detectionParams,omitempty"`
 	AbilityDetectionParams map[string]detection.DetectionParams `json:"abilityDetectionParams,omitempty"`
+	Profiles               []ProfileConfig                      `json:"profiles,omitempty"`
+	ActiveProfile          string                               `json:"activeProfile,omitempty"`
 }
 
 func configPath() string {
@@ -48,6 +56,10 @@ func (a *App) saveConfig() {
 			cfg.AbilityDetectionParams = ap
 		}
 	}
+	if len(a.profiles) > 0 {
+		cfg.Profiles = a.profiles
+	}
+	cfg.ActiveProfile = a.activeProfile
 
 	path := configPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -108,5 +120,27 @@ func (a *App) loadConfig() {
 	if cfg.AbilityDetectionParams != nil && a.detector != nil {
 		a.detector.SetAbilityParamsMap(cfg.AbilityDetectionParams)
 		fmt.Printf("[config] restored per-ability detection params for %d abilities\n", len(cfg.AbilityDetectionParams))
+	}
+	if len(cfg.Profiles) > 0 {
+		a.profiles = cfg.Profiles
+		fmt.Printf("[config] restored %d profiles\n", len(cfg.Profiles))
+	}
+	if cfg.ActiveProfile != "" {
+		a.activeProfile = cfg.ActiveProfile
+		// Restore slot refs from the active profile.
+		for _, p := range a.profiles {
+			if p.Name == cfg.ActiveProfile && a.detector != nil {
+				refs := make(map[detection.SlotKey]string, len(p.SlotRefs))
+				for encoded, abilityName := range p.SlotRefs {
+					if key, ok := decodeSlotKey(encoded); ok {
+						refs[key] = abilityName
+					}
+				}
+				a.detector.ApplySlotRefs(refs, a.refImages)
+				fmt.Printf("[config] restored slot refs from active profile %q (%d slots)\n",
+					cfg.ActiveProfile, len(refs))
+				break
+			}
+		}
 	}
 }

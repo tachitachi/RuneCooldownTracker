@@ -2,14 +2,42 @@ package app
 
 import (
 	"encoding/base64"
+	"fmt"
 	"math"
+	"sort"
 	"sync/atomic"
 
 	"github.com/tachitachi/RuneCooldownTracker/internal/detection"
 )
 
-// StartTracking identifies the abilities in each slot (Phase A) and activates
-// per-frame state detection (Phase B).
+// GridSlot holds the grid position and identified ability name for a single slot.
+type GridSlot struct {
+	Col  int    `json:"col"`
+	Row  int    `json:"row"`
+	Name string `json:"name"` // ability name, or "" when unknown
+}
+
+// AutoDetectAbilities runs Phase A slot identification on the current frame
+// without starting tracking. Call StartTracking separately to begin tracking.
+func (a *App) AutoDetectAbilities() string {
+	if a.detector == nil {
+		return "Capture not running."
+	}
+	if a.currentLayout == nil {
+		return "No grid layout detected yet — set a capture area first."
+	}
+	if a.detector.GetLastFrame() == nil {
+		return "No frame captured yet — make sure the game is visible."
+	}
+
+	a.detector.IdentifyAbilities(a.refImages, a.notReadyRefs)
+	a.saveCurrentToActiveProfile()
+	return "Auto-detect complete."
+}
+
+// StartTracking activates per-frame state detection (Phase B) using whatever
+// slot assignments are currently set. Use AutoDetectAbilities first to identify
+// abilities, or assign them manually via SetSlotAbility.
 func (a *App) StartTracking() string {
 	if a.detector == nil {
 		return "Capture not running."
@@ -21,15 +49,83 @@ func (a *App) StartTracking() string {
 		return "No frame captured yet — make sure the game is visible."
 	}
 
-	refs := detection.LoadReferenceIcons()
-	refImages := detection.BuildRefImages(refs)
-	notReadyRefs := detection.BuildRefImages(detection.LoadNotReadyIcons())
+	slots := a.detector.GetSlotRefs()
+	identified := 0
+	for _, name := range slots {
+		if name != "unknown" && name != "" {
+			identified++
+		}
+	}
+	if identified == 0 {
+		return "No abilities identified — use Auto-detect first."
+	}
 
 	a.detector.OnStateChange = func(changed detection.SlotStateMap) {
 		a.emitSlotStates(changed)
 	}
-	a.detector.StartTracking(refImages, notReadyRefs)
-	return "Tracking started."
+	a.detector.StartTracking()
+	return fmt.Sprintf("Tracking started (%d abilities).", identified)
+}
+
+// GetGridSlots returns every slot position with its current ability assignment.
+func (a *App) GetGridSlots() []GridSlot {
+	if a.detector == nil || a.currentLayout == nil {
+		return nil
+	}
+	crop := a.handler.GetCropRegion()
+	if crop == nil {
+		return nil
+	}
+	layout := *a.currentLayout
+	numCols := layout.NumCols(crop.W)
+	numRows := layout.NumRows(crop.H)
+
+	refs := a.detector.GetSlotRefs()
+	slots := make([]GridSlot, 0, numCols*numRows)
+	for row := 0; row < numRows; row++ {
+		for col := 0; col < numCols; col++ {
+			name := refs[detection.SlotKey{Col: col, Row: row}]
+			if name == "unknown" {
+				name = ""
+			}
+			slots = append(slots, GridSlot{Col: col, Row: row, Name: name})
+		}
+	}
+	return slots
+}
+
+// SetSlotAbility manually assigns an ability to a grid slot and persists the
+// change to the active profile.
+func (a *App) SetSlotAbility(col, row int, name string) {
+	if a.detector == nil {
+		return
+	}
+	a.detector.SetSlotRef(detection.SlotKey{Col: col, Row: row}, name, a.refImages)
+	a.saveCurrentToActiveProfile()
+	a.saveConfig()
+}
+
+// ClearSlotAbility removes the ability assignment from a grid slot and persists
+// the change to the active profile.
+func (a *App) ClearSlotAbility(col, row int) {
+	if a.detector == nil {
+		return
+	}
+	a.detector.ClearSlotRef(detection.SlotKey{Col: col, Row: row})
+	a.saveCurrentToActiveProfile()
+	a.saveConfig()
+}
+
+// GetAllAbilityNames returns the names of all embedded reference icons, sorted
+// alphabetically. Used to populate the manual-assignment dropdown.
+func (a *App) GetAllAbilityNames() []string {
+	refs := detection.LoadReferenceIcons()
+	names := make([]string, 0, len(refs))
+	for name := range refs {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // GetDetectionParams returns the current timer-detection hyperparameters.

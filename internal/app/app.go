@@ -20,6 +20,14 @@ type App struct {
 	dpiScale      int64                 // atomic; stores math.Float64bits of current DPI scale
 	clickInCrop   image.Point           // first click relative to crop in physical pixels
 	currentLayout *detection.SlotLayout // last detected or manually adjusted layout
+
+	// Reference icon caches — loaded once at startup.
+	refImages    map[string]*image.RGBA
+	notReadyRefs map[string]*image.RGBA
+
+	// Profile management.
+	profiles      []ProfileConfig
+	activeProfile string
 }
 
 func NewApp() *App {
@@ -29,6 +37,13 @@ func NewApp() *App {
 // startup is called from the ApplicationStarted event in main.go.
 func (a *App) Startup(app *application.App) {
 	a.app = app
+
+	// Pre-load reference icons before capture starts so they're available in
+	// the OnLayoutDetected callback and for profile restores.
+	refs := detection.LoadReferenceIcons()
+	a.refImages = detection.BuildRefImages(refs)
+	a.notReadyRefs = detection.BuildRefImages(detection.LoadNotReadyIcons())
+
 	a.followWindow(app.Context(), "RuneScape")
 	a.captureGraphics("RuneScape")
 	a.loadConfig()
