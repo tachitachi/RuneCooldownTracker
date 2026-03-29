@@ -10,11 +10,6 @@ body {
     font-family: "Nunito", -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto",
     "Oxygen", "Ubuntu", "Cantarell", "Fira Sans", "Droid Sans", "Helvetica Neue",
     sans-serif;
-    /* For Firefox */
-    scrollbar-width: none;
-    /* For IE and Edge */
-    -ms-overflow-style: none;
-    overflow: hidden;
 }
 
 body::-webkit-scrollbar {

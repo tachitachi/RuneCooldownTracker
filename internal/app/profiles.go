@@ -94,6 +94,9 @@ func (a *App) CreateProfile(name string) string {
 	})
 	a.activeProfile = name
 	a.saveConfig()
+	if a.app != nil {
+		a.app.Event.Emit("profile:changed", map[string]any{"active": a.activeProfile})
+	}
 	return ""
 }
 
@@ -107,6 +110,9 @@ func (a *App) DeleteProfile(name string) string {
 				a.activeProfile = ""
 			}
 			a.saveConfig()
+			if a.app != nil {
+				a.app.Event.Emit("profile:changed", map[string]any{"active": a.activeProfile})
+			}
 			return ""
 		}
 	}
@@ -129,6 +135,9 @@ func (a *App) LoadProfile(name string) string {
 				a.detector.ApplySlotRefs(refs, a.refImages)
 			}
 			a.saveConfig()
+			if a.app != nil {
+				a.app.Event.Emit("profile:changed", map[string]any{"active": a.activeProfile})
+			}
 			return ""
 		}
 	}

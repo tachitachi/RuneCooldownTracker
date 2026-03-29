@@ -11,10 +11,21 @@ import (
 	"github.com/tachitachi/RuneCooldownTracker/internal/detection"
 )
 
+// AbilityOverlayConfig stores the per-ability tracker-icon placement and style.
+type AbilityOverlayConfig struct {
+	X            float64 `json:"x"`
+	Y            float64 `json:"y"`
+	Size         float64 `json:"size"`         // logical px, default 48
+	GlowEnabled  bool    `json:"glowEnabled"`
+	GlowDuration float64 `json:"glowDuration"` // animation seconds, default 1.0
+	OnCooldown   string  `json:"onCooldown"`   // "translucent" | "hidden"
+}
+
 // ProfileConfig stores the named slot-to-ability assignments for a single profile.
 type ProfileConfig struct {
-	Name     string            `json:"name"`
-	SlotRefs map[string]string `json:"slotRefs,omitempty"` // "col:row" → abilityName
+	Name            string                          `json:"name"`
+	SlotRefs        map[string]string               `json:"slotRefs,omitempty"`       // "col:row" → abilityName
+	AbilityOverlays map[string]AbilityOverlayConfig `json:"abilityOverlays,omitempty"` // abilityName → overlay config
 }
 
 type appConfig struct {
@@ -25,6 +36,10 @@ type appConfig struct {
 	AbilityDetectionParams map[string]detection.DetectionParams `json:"abilityDetectionParams,omitempty"`
 	Profiles               []ProfileConfig                      `json:"profiles,omitempty"`
 	ActiveProfile          string                               `json:"activeProfile,omitempty"`
+	// DebugMode uses *bool so that absence in JSON defaults to true (preserves
+	// existing behaviour for users who haven't opened the new config window yet).
+	DebugMode       *bool `json:"debugMode,omitempty"`
+	TrackingEnabled bool  `json:"trackingEnabled"`
 }
 
 func configPath() string {
@@ -60,6 +75,8 @@ func (a *App) saveConfig() {
 		cfg.Profiles = a.profiles
 	}
 	cfg.ActiveProfile = a.activeProfile
+	cfg.DebugMode = &a.debugMode
+	cfg.TrackingEnabled = a.trackingEnabled
 
 	path := configPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
@@ -125,6 +142,12 @@ func (a *App) loadConfig() {
 		a.profiles = cfg.Profiles
 		fmt.Printf("[config] restored %d profiles\n", len(cfg.Profiles))
 	}
+	if cfg.DebugMode != nil {
+		a.debugMode = *cfg.DebugMode
+	} else {
+		a.debugMode = true // first-run default: show debug overlays
+	}
+	a.trackingEnabled = cfg.TrackingEnabled
 	if cfg.ActiveProfile != "" {
 		a.activeProfile = cfg.ActiveProfile
 		// Restore slot refs from the active profile.

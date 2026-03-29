@@ -8,8 +8,9 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        main:   resolve(__dirname, 'index.html'),
-        config: resolve(__dirname, 'config.html'),
+        main:            resolve(__dirname, 'index.html'),
+        config:          resolve(__dirname, 'config.html'),
+        cooldownTracker: resolve(__dirname, 'cooldown-tracker.html'),
       },
     },
   },

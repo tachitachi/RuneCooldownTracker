@@ -223,6 +223,7 @@ func (a *App) emitSlotStates(states detection.SlotStateMap) {
 	type slotEvent struct {
 		Col   int     `json:"col"`
 		Row   int     `json:"row"`
+		Name  string  `json:"name"`
 		X     float64 `json:"x"`
 		Y     float64 `json:"y"`
 		W     float64 `json:"w"`
@@ -230,6 +231,7 @@ func (a *App) emitSlotStates(states detection.SlotStateMap) {
 		State int     `json:"state"`
 	}
 
+	slotRefs := a.detector.GetSlotRefs()
 	slots := make([]slotEvent, 0, len(states))
 	for key, state := range states {
 		x0 := layout.ColPhase + key.Col*layout.ColPeriod
@@ -237,6 +239,7 @@ func (a *App) emitSlotStates(states detection.SlotStateMap) {
 		slots = append(slots, slotEvent{
 			Col:   key.Col,
 			Row:   key.Row,
+			Name:  slotRefs[key],
 			X:     float64(crop.X+x0) / scale,
 			Y:     float64(crop.Y+y0) / scale,
 			W:     float64(layout.ColPeriod) / scale,
