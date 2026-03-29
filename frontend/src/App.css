@@ -4,3 +4,8 @@
     text-align: center;
     display: block;
 }
+
+@keyframes glow-pulse {
+    0%, 100% { box-shadow: 0 0 6px 2px gold; border-color: gold; }
+    50%       { box-shadow: 0 0 14px 6px gold; border-color: #fff7aa; }
+}

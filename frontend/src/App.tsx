@@ -1,6 +1,6 @@
-import {useState, useEffect, useCallback} from 'react'
+import {useState, useEffect, useCallback, useMemo} from 'react'
 import {Events} from '@wailsio/runtime'
-import {ConfirmSnip, CancelSnipping} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
+import {ConfirmSnip, CancelSnipping, ConfirmIconPlacement, CancelIconPlacement, GetAbilityOverlayConfigs, GetAbilityIcon} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
 import './App.css'
 
 interface GridLines {
@@ -11,11 +11,21 @@ interface GridLines {
 interface SlotState {
     col: number
     row: number
+    name: string
     x: number
     y: number
     w: number
     h: number
     state: number  // 0=ready, 1=cooldown, 2=no_resources, 3=unknown
+}
+
+interface AbilityOverlayCfg {
+    x: number
+    y: number
+    size: number
+    glowEnabled: boolean
+    glowDuration: number
+    onCooldown: string
 }
 
 // STATE_COLORS maps AbilityState int values to overlay tint colours.
@@ -36,6 +46,13 @@ export default function App() {
     const [firstClick, setFirstClick] = useState<{x: number; y: number} | null>(null)
     const [gridLines, setGridLines] = useState<GridLines | null>(null)
     const [slotStates, setSlotStates] = useState<Map<string, SlotState>>(new Map())
+
+    // Cooldown tracker overlay state
+    const [debugMode, setDebugMode] = useState(true)
+    const [trackingEnabled, setTrackingEnabled] = useState(false)
+    const [overlayConfigs, setOverlayConfigs] = useState<Record<string, AbilityOverlayCfg>>({})
+    const [placingAbility, setPlacingAbility] = useState<string | null>(null)
+    const [abilityIcons, setAbilityIcons] = useState<Record<string, string>>({})
 
     // Listen for snipping:start from Go
     useEffect(() => {
@@ -69,19 +86,65 @@ export default function App() {
         return () => off()
     }, [])
 
-    // Escape to cancel at any point
+    // Listen for debug mode, tracking enabled, overlay configs, placement events
     useEffect(() => {
-        if (!snipping) return
+        const offs = [
+            Events.On('debug:mode', (ev: any) => setDebugMode(ev.data?.enabled ?? true)),
+            Events.On('tracking:enabled', (ev: any) => setTrackingEnabled(ev.data?.enabled ?? false)),
+            Events.On('overlay:configs', (ev: any) => {
+                setOverlayConfigs((ev.data as Record<string, AbilityOverlayCfg>) ?? {})
+            }),
+            Events.On('tracker:place:start', (ev: any) => setPlacingAbility(ev.data?.name ?? null)),
+            Events.On('tracker:place:end', () => setPlacingAbility(null)),
+            Events.On('profile:changed', async () => {
+                const cfgs = await GetAbilityOverlayConfigs()
+                setOverlayConfigs((cfgs as Record<string, AbilityOverlayCfg>) ?? {})
+            }),
+        ]
+        return () => offs.forEach(off => off())
+    }, [])
+
+    // Preload icons when overlayConfigs changes
+    useEffect(() => {
+        const needed = Object.keys(overlayConfigs).filter(n => !abilityIcons[n])
+        if (needed.length === 0) return
+        Promise.all(needed.map(async name => {
+            const b64 = await GetAbilityIcon(name)
+            return [name, b64 ?? ''] as [string, string]
+        })).then(entries => {
+            setAbilityIcons(prev => {
+                const next = {...prev}
+                for (const [name, b64] of entries) {
+                    if (b64) next[name] = b64
+                }
+                return next
+            })
+        })
+    }, [overlayConfigs])
+
+    // Build state lookup by ability name for tracker icons
+    const stateByName = useMemo(() =>
+        new Map(Array.from(slotStates.values()).filter(s => s.name).map(s => [s.name, s])),
+    [slotStates])
+
+    // Escape to cancel snipping or placement
+    useEffect(() => {
+        if (!snipping && !placingAbility) return
         const onKey = (e: KeyboardEvent) => {
             if (e.key === 'Escape') {
-                CancelSnipping()
-                setSnipping(false)
-                setFirstClick(null)
+                if (snipping) {
+                    CancelSnipping()
+                    setSnipping(false)
+                    setFirstClick(null)
+                } else if (placingAbility) {
+                    CancelIconPlacement()
+                    setPlacingAbility(null)
+                }
             }
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
-    }, [snipping])
+    }, [snipping, placingAbility])
 
     const onMouseDown = useCallback((e: React.MouseEvent) => {
         if (!firstClick) {
@@ -105,6 +168,12 @@ export default function App() {
             setFirstClick(null)
         }
     }, [firstClick])
+
+    const onPlacementClick = useCallback((e: React.MouseEvent) => {
+        if (!placingAbility) return
+        ConfirmIconPlacement(placingAbility, e.clientX, e.clientY)
+        setPlacingAbility(null)
+    }, [placingAbility])
 
     if (snipping) {
         const instruction = firstClick
@@ -156,6 +225,39 @@ export default function App() {
         )
     }
 
+    // Icon placement mode — transparent click-capture layer
+    if (placingAbility) {
+        return (
+            <div
+                style={{
+                    position: 'fixed',
+                    inset: 0,
+                    cursor: 'crosshair',
+                    userSelect: 'none',
+                }}
+                onMouseDown={onPlacementClick}
+            >
+                <div
+                    style={{
+                        position: 'absolute',
+                        bottom: 16,
+                        left: '50%',
+                        transform: 'translateX(-50%)',
+                        color: 'white',
+                        fontSize: 13,
+                        background: 'rgba(0,0,0,0.7)',
+                        padding: '6px 14px',
+                        borderRadius: 6,
+                        pointerEvents: 'none',
+                        whiteSpace: 'nowrap',
+                    }}
+                >
+                    Click to place {placingAbility.replace(/_/g, ' ')} — Esc to cancel
+                </div>
+            </div>
+        )
+    }
+
     // The actual detection area doesn't exactly align with where we are drawing the grid
     let offsetCorrections = {
         x: 5,
@@ -165,7 +267,8 @@ export default function App() {
     // Normal overlay content (transparent, non-interactive)
     return (
         <div id="App">
-            {Array.from(slotStates.values()).map(s => (
+            {/* Debug overlays: state tints and grid lines — only shown in debug mode */}
+            {debugMode && Array.from(slotStates.values()).map(s => (
                 <div key={`ss_${s.col}_${s.row}`} style={{
                     position: 'fixed',
                     left: s.x + offsetCorrections.x,
@@ -176,7 +279,7 @@ export default function App() {
                     pointerEvents: 'none',
                 }}/>
             ))}
-            {gridLines?.xLines.map((x, i) => (
+            {debugMode && gridLines?.xLines.map((x, i) => (
                 <div key={`gx${i}`} style={{
                     position: 'fixed',
                     left: x + offsetCorrections.x,
@@ -188,7 +291,7 @@ export default function App() {
                     pointerEvents: 'none',
                 }}/>
             ))}
-            {gridLines?.yLines.map((y, i) => (
+            {debugMode && gridLines?.yLines.map((y, i) => (
                 <div key={`gy${i}`} style={{
                     position: 'fixed',
                     left: gridLines?.xLines ? Math.min(...gridLines?.xLines) + offsetCorrections.x : 0,
@@ -200,6 +303,43 @@ export default function App() {
                     pointerEvents: 'none',
                 }}/>
             ))}
+
+            {/* Tracker icon overlays — only shown when tracking is enabled */}
+            {trackingEnabled && Object.entries(overlayConfigs).map(([name, cfg]) => {
+                const s = stateByName.get(name)
+                const state = s?.state ?? 3
+
+                if (cfg.onCooldown === 'hidden' && state === 1) return null
+
+                const opacity = (cfg.onCooldown === 'translucent' && state === 1) ? 0.25 : 1.0
+                const glow = cfg.glowEnabled && state === 0
+
+                return (
+                    <div key={`tracker_${name}`} style={{
+                        position: 'fixed',
+                        left: cfg.x,
+                        top: cfg.y,
+                        width: cfg.size,
+                        height: cfg.size,
+                        opacity,
+                        borderRadius: 4,
+                        border: '2px solid transparent',
+                        animation: glow ? `glow-pulse ${cfg.glowDuration}s ease-in-out infinite` : 'none',
+                        pointerEvents: 'none',
+                        overflow: 'hidden',
+                        boxSizing: 'border-box',
+                    }}>
+                        {abilityIcons[name] && (
+                            <img
+                                src={`data:image/png;base64,${abilityIcons[name]}`}
+                                width={cfg.size}
+                                height={cfg.size}
+                                style={{imageRendering: 'pixelated', display: 'block'}}
+                            />
+                        )}
+                    </div>
+                )
+            })}
         </div>
     )
 }

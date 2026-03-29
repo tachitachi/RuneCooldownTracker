@@ -47,6 +47,9 @@ func main() {
 	menu.Add("Open Config").OnClick(func(_ *application.Context) {
 		appService.CreateConfigWindow(app)
 	})
+	menu.Add("Cooldown Tracker Config").OnClick(func(_ *application.Context) {
+		appService.CreateCooldownTrackerConfigWindow(app)
+	})
 	menu.Add("Quit").OnClick(func(_ *application.Context) {
 		app.Quit()
 	})

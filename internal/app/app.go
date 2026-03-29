@@ -28,6 +28,11 @@ type App struct {
 	// Profile management.
 	profiles      []ProfileConfig
 	activeProfile string
+
+	// Cooldown tracker overlay state.
+	cooldownTrackerWindow *application.WebviewWindow
+	debugMode             bool
+	trackingEnabled       bool
 }
 
 func NewApp() *App {
