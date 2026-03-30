@@ -34,6 +34,7 @@ func (a *App) CreateCooldownTrackerConfigWindow(app *application.App) {
 		a.app.Event.Emit("debug:mode", map[string]any{"enabled": a.debugMode})
 		a.app.Event.Emit("tracking:enabled", map[string]any{"enabled": a.trackingEnabled})
 		a.app.Event.Emit("profile:changed", map[string]any{"active": a.activeProfile})
+		a.app.Event.Emit("combat:timeout", map[string]any{"seconds": a.GetCombatTimeout()})
 		overlays := a.GetAbilityOverlayConfigs()
 		if len(overlays) > 0 {
 			a.app.Event.Emit("overlay:configs", overlays)
@@ -138,6 +139,33 @@ func (a *App) ConfirmIconPlacement(name string, x, y float64) {
 func (a *App) CancelIconPlacement() {
 	a.overlayWindow.SetIgnoreMouseEvents(true)
 	a.app.Event.Emit("tracker:place:end", map[string]any{"name": ""})
+}
+
+// GetCombatTimeout returns the active profile's combat timeout in seconds.
+// -1 means indefinite (never auto-hide). Default is 10 when not explicitly set.
+func (a *App) GetCombatTimeout() float64 {
+	for _, p := range a.profiles {
+		if p.Name == a.activeProfile {
+			if p.CombatTimeout != nil {
+				return *p.CombatTimeout
+			}
+			return 10
+		}
+	}
+	return 10
+}
+
+// SetCombatTimeout saves the combat timeout for the active profile, persists it,
+// and broadcasts a combat:timeout event to all windows.
+func (a *App) SetCombatTimeout(seconds float64) {
+	for i, p := range a.profiles {
+		if p.Name == a.activeProfile {
+			a.profiles[i].CombatTimeout = &seconds
+			a.saveConfig()
+			a.app.Event.Emit("combat:timeout", map[string]any{"seconds": seconds})
+			return
+		}
+	}
 }
 
 // AdjustIconPlacement nudges the named ability's tracker icon position or size

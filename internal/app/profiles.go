@@ -137,6 +137,7 @@ func (a *App) LoadProfile(name string) string {
 			a.saveConfig()
 			if a.app != nil {
 				a.app.Event.Emit("profile:changed", map[string]any{"active": a.activeProfile})
+				a.app.Event.Emit("combat:timeout", map[string]any{"seconds": a.GetCombatTimeout()})
 			}
 			return ""
 		}

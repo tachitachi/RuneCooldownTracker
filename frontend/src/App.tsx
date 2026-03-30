@@ -1,6 +1,6 @@
-import {useState, useEffect, useCallback, useMemo} from 'react'
+import {useState, useEffect, useCallback, useMemo, useRef} from 'react'
 import {Events} from '@wailsio/runtime'
-import {ConfirmSnip, CancelSnipping, ConfirmIconPlacement, CancelIconPlacement, GetAbilityOverlayConfigs, GetAbilityIcon} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
+import {ConfirmSnip, CancelSnipping, ConfirmIconPlacement, CancelIconPlacement, GetAbilityOverlayConfigs, GetAbilityIcon, GetCombatTimeout} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
 import './App.css'
 
 interface GridLines {
@@ -55,6 +55,13 @@ export default function App() {
     const [abilityIcons, setAbilityIcons] = useState<Record<string, string>>({})
     const [mousePos, setMousePos] = useState<{x: number; y: number} | null>(null)
 
+    // Combat timeout: hide overlay when no ability goes on cooldown for N seconds.
+    // -1 = indefinite (never hide). Default 10s until backend hydrates value.
+    const [combatTimeout, setCombatTimeout] = useState(10)
+    const combatTimeoutRef = useRef(10)
+    const [inCombat, setInCombat] = useState(false)
+    const combatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
     // Listen for snipping:start from Go
     useEffect(() => {
         const off = Events.On('snipping:start', () => {
@@ -83,6 +90,16 @@ export default function App() {
                 }
                 return next
             })
+            // If any ability just went on cooldown, reset the combat visibility timer
+            const hasCooldown = updates.some((s: SlotState) => s.state === 1)
+            if (hasCooldown && combatTimeoutRef.current >= 0) {
+                if (combatTimerRef.current) clearTimeout(combatTimerRef.current)
+                setInCombat(true)
+                combatTimerRef.current = setTimeout(
+                    () => setInCombat(false),
+                    combatTimeoutRef.current * 1000
+                )
+            }
         })
         return () => off()
     }, [])
@@ -106,6 +123,15 @@ export default function App() {
             Events.On('profile:changed', async () => {
                 const cfgs = await GetAbilityOverlayConfigs()
                 setOverlayConfigs((cfgs as Record<string, AbilityOverlayCfg>) ?? {})
+                const t = await GetCombatTimeout()
+                const timeout = t ?? 10
+                setCombatTimeout(timeout)
+                combatTimeoutRef.current = timeout
+            }),
+            Events.On('combat:timeout', (ev: any) => {
+                const t = ev.data?.seconds ?? 10
+                setCombatTimeout(t)
+                combatTimeoutRef.current = t
             }),
         ]
         return () => offs.forEach(off => off())
@@ -328,8 +354,8 @@ export default function App() {
                 )
             })()}
 
-            {/* Tracker icon overlays — only shown when tracking is enabled */}
-            {trackingEnabled && Object.entries(overlayConfigs).map(([name, cfg]) => {
+            {/* Tracker icon overlays — shown when tracking is enabled and in combat (or timeout is indefinite) */}
+            {(trackingEnabled && (combatTimeout < 0 || inCombat)) && Object.entries(overlayConfigs).map(([name, cfg]) => {
                 const s = stateByName.get(name)
                 const state = s?.state ?? 3
 

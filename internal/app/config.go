@@ -26,6 +26,7 @@ type ProfileConfig struct {
 	Name            string                          `json:"name"`
 	SlotRefs        map[string]string               `json:"slotRefs,omitempty"`       // "col:row" → abilityName
 	AbilityOverlays map[string]AbilityOverlayConfig `json:"abilityOverlays,omitempty"` // abilityName → overlay config
+	CombatTimeout   *float64                        `json:"combatTimeout,omitempty"`   // seconds; nil → 10s default; -1 → indefinite
 }
 
 type appConfig struct {

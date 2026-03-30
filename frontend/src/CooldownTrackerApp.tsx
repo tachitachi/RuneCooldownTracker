@@ -7,6 +7,7 @@ import {
     GetDebugMode, SetDebugMode,
     GetTrackingEnabled, SetTrackingEnabled,
     GetActiveProfile, GetProfiles, LoadProfile, CreateProfile, DeleteProfile,
+    GetCombatTimeout, SetCombatTimeout,
 } from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/app'
 import {AbilityOverlayConfig} from '../bindings/github.com/tachitachi/RuneCooldownTracker/internal/app/models'
 
@@ -57,6 +58,9 @@ export default function CooldownTrackerApp() {
     const [placingAbility, setPlacingAbility] = useState<string | null>(null)
     const [expandedAbility, setExpandedAbility] = useState<string | null>(null)
 
+    // Combat timeout
+    const [combatTimeout, setCombatTimeoutState] = useState(10)
+
     // Profiles
     const [profiles, setProfiles] = useState<string[]>([])
     const [profileDropdown, setProfileDropdown] = useState('')
@@ -102,6 +106,7 @@ export default function CooldownTrackerApp() {
         GetTrackingEnabled().then(v => setTrackingEnabledState(v ?? false))
         GetActiveProfile().then(ap => { if (ap != null) setActiveProfile(ap) })
         GetProfiles().then(ps => { if (ps) setProfiles(ps) })
+        GetCombatTimeout().then(t => setCombatTimeoutState(t ?? 10))
         refreshAbilities()
         refreshOverlayConfigs()
     }, [])
@@ -121,6 +126,7 @@ export default function CooldownTrackerApp() {
             }),
             Events.On('debug:mode', (ev: any) => setDebugModeState(ev.data?.enabled ?? false)),
             Events.On('tracking:enabled', (ev: any) => setTrackingEnabledState(ev.data?.enabled ?? false)),
+            Events.On('combat:timeout', (ev: any) => setCombatTimeoutState(ev.data?.seconds ?? 10)),
             Events.On('tracker:place:end', () => setPlacingAbility(null)),
             Events.On('profile:changed', async (ev: any) => {
                 const ap = ev.data?.active ?? ''
@@ -253,6 +259,38 @@ export default function CooldownTrackerApp() {
                 <button style={toggleBtn(debugMode, '#6a4a1a')} onClick={handleToggleDebug}>
                     {debugMode ? 'Debug Mode: On' : 'Debug Mode: Off'}
                 </button>
+            </div>
+
+            {/* ── Combat Timeout ── */}
+            <div style={{display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap'}}>
+                <span style={{fontSize: 13, color: '#aaa'}}>Auto-hide after:</span>
+                {combatTimeout >= 0 && (
+                    <>
+                        <input
+                            type="number" min={1} step={1}
+                            value={combatTimeout}
+                            onChange={e => {
+                                const v = Math.max(1, parseInt(e.target.value) || 1)
+                                setCombatTimeoutState(v)
+                                SetCombatTimeout(v)
+                            }}
+                            style={{...inputStyle, width: 70}}
+                        />
+                        <span style={{fontSize: 13, color: '#aaa'}}>seconds of inactivity</span>
+                    </>
+                )}
+                <label style={{display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer'}}>
+                    <input
+                        type="checkbox"
+                        checked={combatTimeout < 0}
+                        onChange={e => {
+                            const v = e.target.checked ? -1 : 10
+                            setCombatTimeoutState(v)
+                            SetCombatTimeout(v)
+                        }}
+                    />
+                    <span style={{fontSize: 13}}>Never hide</span>
+                </label>
             </div>
 
             {/* ── Placement Banner ── */}
